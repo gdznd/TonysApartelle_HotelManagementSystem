@@ -11,3 +11,5 @@ build/
 
 # Database certificates (Keep your TiDB safe!)
 ca.pem
+
+*.pdf
