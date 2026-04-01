@@ -784,105 +784,42 @@ def get_inventory_report():
     conn.close()
     return jsonify(inventory_data)
 
-# --- MODULE 12: INCOME REPORT (NO SERVICE CHARGES) ---
-@app.route('/api/reports/dashboard', methods=['GET'])
-def get_income_dashboard():
+# ==========================================
+# MODULE 13: INCOME REPORT (Jesiah Opelena)
+# ==========================================
+@app.route('/api/reports/income', methods=['GET'])
+def get_income_report():
     conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
+    if not conn: return jsonify({"error": "No DB Connection"}), 500
+    
     try:
-        # --- HELPER: Safely get sum from a table ---
-        def get_safe_sum(table_name, column_name, where_clause=""):
-            cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
-            if not cursor.fetchone():
-                return 0.0
-            
-            # Check if column exists before summing (Extra safety)
-            cursor.execute(f"SHOW COLUMNS FROM {table_name} LIKE '{column_name}'")
-            if not cursor.fetchone():
-                return 0.0
-
-            sql = f"SELECT SUM({column_name}) as total FROM {table_name} {where_clause}"
-            cursor.execute(sql)
-            result = cursor.fetchone()
-            return float(result['total']) if result and result['total'] else 0.0
-
-        # --- 1. CALCULATE REVENUE ---
-        room_revenue = get_safe_sum('bookings', 'total_price', "WHERE status != 'Cancelled'")
+        cursor = conn.cursor(dictionary=True)
+        query = """
+            SELECT 
+                DATE(p.payment_date) as date,
+                SUM(p.amount) as total_income,
+                COUNT(p.payment_id) as transaction_count,
+                r.room_type
+            FROM payments p
+            LEFT JOIN bookings b ON p.booking_id = b.id
+            LEFT JOIN rooms r ON b.room_id = r.id
+            GROUP BY date, r.room_type
+            ORDER BY date DESC
+        """
+        cursor.execute(query)
+        report_data = cursor.fetchall()
         
-        # FIXED: We are not tracking service charges, so this is always 0
-        service_revenue = 0.0 
+        # Ensure numbers and dates are JSON-friendly for the React Table
+        for row in report_data:
+            row['date'] = str(row['date'])
+            row['total_income'] = float(row['total_income']) if row['total_income'] else 0.0
         
-        damage_revenue = get_safe_sum('checkouts', 'damage_charge')
-
-        total_revenue = room_revenue + service_revenue + damage_revenue
-
-        # --- 2. OCCUPANCY RATE ---
-        cursor.execute("SELECT COUNT(*) as total FROM rooms")
-        res_rooms = cursor.fetchone()
-        total_rooms = res_rooms['total'] if res_rooms else 0
-
-        occupied_rooms = 0
-        if total_rooms > 0:
-            cursor.execute("SELECT COUNT(*) as occupied FROM bookings WHERE status IN ('Checked-in', 'Confirmed')")
-            res_occ = cursor.fetchone()
-            occupied_rooms = res_occ['occupied'] if res_occ else 0
-        
-        occupancy_rate = round((occupied_rooms / total_rooms * 100), 1) if total_rooms > 0 else 0
-
-        # --- 3. ADR (Average Daily Rate) ---
-        cursor.execute("SELECT AVG(total_price) as adr FROM bookings WHERE status != 'Cancelled'")
-        res_adr = cursor.fetchone()
-        adr = round(float(res_adr['adr']), 2) if res_adr and res_adr['adr'] else 0.0
-
-        # --- 4. CHARTS DATA ---
-        
-        # Room Type Chart
-        cursor.execute("""
-            SELECT r.room_type as name, SUM(b.total_price) as value
-            FROM bookings b
-            JOIN rooms r ON b.room_id = r.id
-            WHERE b.status != 'Cancelled'
-            GROUP BY r.room_type
-        """)
-        room_type_data = cursor.fetchall()
-
-        # Payment Method Chart
-        payment_method_data = []
-        cursor.execute("SHOW TABLES LIKE 'payments'")
-        if cursor.fetchone():
-            cursor.execute("""
-                SELECT payment_method as name, SUM(amount) as value
-                FROM payments
-                GROUP BY payment_method
-            """)
-            payment_method_data = cursor.fetchall()
-
-        # --- 5. SEND RESPONSE ---
-        return jsonify({
-            "metrics": {
-                "total_revenue": total_revenue,
-                "occupancy_rate": occupancy_rate,
-                "adr": adr,
-                "revpar": round(total_revenue / total_rooms, 2) if total_rooms else 0
-            },
-            "charts": {
-                "room_type": room_type_data,
-                "payment_method": payment_method_data
-            },
-            "summary": {
-                "room_charges": room_revenue,
-                "services": service_revenue, # This will now safely send 0
-                "damages": damage_revenue,
-                "gross": total_revenue
-            }
-        })
-
+        return jsonify(report_data), 200
     except Exception as e:
-        print(f"❌ DASHBOARD ERROR: {e}") 
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
+# Keep your if __name__ == '__main__': block below this

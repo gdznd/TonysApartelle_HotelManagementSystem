@@ -1,197 +1,167 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
 
 export default function IncomeReport() {
     const [data, setData] = useState(null);
-    const [loading, setLoading] = useState(true);
-
-    // Colors for Pie Chart
-    const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
+        const fetchData = async () => {
+            try {
+                const response = await fetch('http://127.0.0.1:5000/api/reports/income');
+                const result = await response.json();
+                setData(result);
+                setIsLoading(false);
+            } catch (error) {
+                console.error("Error:", error);
+                setIsLoading(false);
+            }
+        };
         fetchData();
     }, []);
 
-    const fetchData = () => {
-        axios.get('http://127.0.0.1:5000/api/reports/dashboard')
-            .then(res => {
-                setData(res.data);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error("Error fetching report:", err);
-                setLoading(false);
-                alert("Error loading report. Check Python console for details.");
-            });
-    };
-
-    const generatePDF = () => {
-        if (!data) return;
-        const doc = new jsPDF();
-        
-        doc.setFontSize(18);
-        doc.text("HotelSys Income Report", 14, 20);
-        doc.setFontSize(12);
-        doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30);
-
-        doc.autoTable({
-            startY: 40,
-            head: [['Category', 'Amount']],
-            body: [
-                ['Room Charges', `P ${data.summary.room_charges.toLocaleString()}`],
-                ['Services & Extras', `P ${data.summary.services.toLocaleString()}`],
-                ['Damages & Fines', `P ${data.summary.damages.toLocaleString()}`],
-                ['GROSS REVENUE', `P ${data.summary.gross.toLocaleString()}`],
-            ],
-        });
-        doc.save('income_report.pdf');
-    };
-
-    if (loading) return <div>Loading Report...</div>;
-
     return (
-        <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif', background: '#f4f6f9' }}>
-            <h2>Module 12: Income Report</h2>
+        <>
+            <style>{`
+                :root {
+                    --primary-color: #007bff;
+                    --secondary-color: #6c757d;
+                    --danger-color: #dc3545;
+                    --success-color: #28a745;
+                    --warning-color: #ffc107;
+                    --info-color: #17a2b8;
+                    --bg-color: #f8f9fa;
+                    --card-bg: #ffffff;
+                    --text-color: #333;
+                    --border-color: #dee2e6;
+                    --border-radius: 8px;
+                    --shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+                }
 
-            {/* 1. FILTERS (Visual Only for now) */}
-            <div style={cardStyle}>
-                <h4 style={{ margin: '0 0 15px 0', color: '#007bff' }}>Date Range Filter</h4>
-                <div style={{ display: 'flex', gap: '15px' }}>
-                    <input type="date" style={inputStyle} />
-                    <input type="date" style={inputStyle} />
-                    <select style={inputStyle}>
-                        <option>Monthly</option>
-                        <option>Weekly</option>
-                        <option>Yearly</option>
-                    </select>
-                    <button onClick={fetchData} style={btnBlue}>Filter Report</button>
-                </div>
-            </div>
-
-            {/* 2. KEY METRICS CARDS */}
-            <div style={{ display: 'flex', gap: '20px', margin: '20px 0' }}>
-                <MetricCard title="TOTAL REVENUE" value={`₱${data.metrics.total_revenue.toLocaleString()}`} />
-                <MetricCard title="OCCUPANCY RATE" value={`${data.metrics.occupancy_rate}%`} />
-                <MetricCard title="AVG. DAILY RATE (ADR)" value={`₱${data.metrics.adr}`} />
-                <MetricCard title="REVPAR" value={`₱${data.metrics.revpar}`} />
-            </div>
-
-            {/* 3. CHARTS SECTION */}
-            <div style={{ ...cardStyle, display: 'flex', gap: '20px', height: '400px' }}>
+                .system-container { max-width: 1200px; margin: 20px auto; padding: 20px; }
+                .page-section { background-color: var(--card-bg); border-radius: var(--border-radius); box-shadow: var(--shadow); padding: 25px; margin-bottom: 30px; }
+                .page-section-title { font-size: 1.8em; font-weight: 700; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
+                .page-section-subtitle { font-size: 1.3em; font-weight: 600; color: var(--primary-color); margin-bottom: 15px; margin-top: 10px; }
                 
-                {/* Bar Chart: Room Types */}
-                <div style={{ flex: 1 }}>
-                    <h4 style={{ textAlign: 'center', color: '#555' }}>Income by Room Type</h4>
-                    <ResponsiveContainer width="100%" height={300}>
-                        <BarChart data={data.charts.room_type}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="name" />
-                            <YAxis />
-                            <Tooltip formatter={(value) => `₱${value.toLocaleString()}`} />
-                            <Bar dataKey="value" fill="#8884d8" name="Revenue" />
-                        </BarChart>
-                    </ResponsiveContainer>
-                </div>
-
-                {/* Pie Chart: Payment Methods */}
-                <div style={{ flex: 1 }}>
-                    <h4 style={{ textAlign: 'center', color: '#555' }}>Income by Payment Method</h4>
-                    <ResponsiveContainer width="100%" height={300}>
-                        <PieChart>
-                            <Pie
-                                data={data.charts.payment_method}
-                                cx="50%"
-                                cy="50%"
-                                outerRadius={100}
-                                fill="#8884d8"
-                                dataKey="value"
-                                label={({name, percent}) => `${name} ${(percent * 100).toFixed(0)}%`}
-                            >
-                                {data.charts.payment_method.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                            </Pie>
-                            <Tooltip formatter={(value) => `₱${value.toLocaleString()}`} />
-                        </PieChart>
-                    </ResponsiveContainer>
-                </div>
-            </div>
-
-            {/* 4. SUMMARY TABLE */}
-            <div style={{ ...cardStyle, marginTop: '20px' }}>
-                <h4 style={{ margin: '0 0 15px 0', color: '#007bff' }}>Summary</h4>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <tbody>
-                        <SummaryRow label="Room Charges Summary" amount={data.summary.room_charges} />
-                        <SummaryRow label="Additional Services Income" amount={data.summary.services} />
-                        <SummaryRow label="Damages Collected" amount={data.summary.damages} />
-                        <tr style={{ background: '#e9ecef', fontWeight: 'bold' }}>
-                            <td style={tdStyle}>Gross Revenue</td>
-                            <td style={{...tdStyle, textAlign: 'right'}}>₱{data.summary.gross.toLocaleString()}</td>
-                        </tr>
-                    </tbody>
-                </table>
+                .bordered-section { border: 1px solid var(--border-color); border-radius: var(--border-radius); padding: 20px; margin-top: 25px; }
+                .bordered-section-title { font-size: 1.1em; font-weight: 600; color: var(--secondary-color); margin-bottom: 15px; }
                 
-                <button onClick={generatePDF} style={{ ...btnBlue, marginTop: '20px' }}>
-                    Export Report (PDF)
-                </button>
-            </div>
-        </div>
+                .form-group { margin-bottom: 15px; }
+                .form-group label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 0.9em; }
+                .form-group input, .form-group select { width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 1em; }
+                
+                .button { padding: 10px 15px; border: none; border-radius: 6px; font-size: 1em; font-weight: 600; cursor: pointer; background-color: var(--primary-color); color: white; transition: opacity 0.2s; }
+                .button:hover { opacity: 0.85; }
+
+                .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; margin-bottom: 25px; }
+                .kpi-card { background-color: var(--bg-color); border: 1px solid var(--border-color); border-radius: var(--border-radius); padding: 20px; }
+                .kpi-card .title { font-size: 0.9em; font-weight: 600; color: var(--secondary-color); text-transform: uppercase; }
+                .kpi-card .value { font-size: 2.5em; font-weight: 700; color: var(--primary-color); }
+
+                .two-column-layout { display: flex; flex-wrap: wrap; gap: 25px; }
+                .two-column-layout > div { flex: 1; min-width: 300px; }
+
+                .chart-placeholder { width: 100%; height: 300px; background-color: var(--bg-color); border: 1px dashed var(--border-color); border-radius: var(--border-radius); display: flex; align-items: center; justify-content: center; color: var(--secondary-color); }
+
+                .styled-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+                .styled-table th, .styled-table td { border: 1px solid var(--border-color); padding: 10px; text-align: left; font-size: 0.9em; }
+                .styled-table th { background-color: var(--bg-color); font-weight: 600; }
+            `}</style>
+
+            <main className="system-container">
+                <section className="page-section">
+                    <h2 className="page-section-title">Module 12: Income Report</h2>
+
+                    <div className="bordered-section">
+                        <h3 className="page-section-subtitle">Date Range Filter</h3>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '40px', alignItems: 'flex-end' }}>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label>Start Date</label>
+                                <input type="date" />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label>End Date</label>
+                                <input type="date" />
+                            </div>
+                            <div className="form-group" style={{ marginBottom: 0 }}>
+                                <label>Filter</label>
+                                <select defaultValue="Monthly">
+                                    <option>Daily</option>
+                                    <option>Weekly</option>
+                                    <option>Monthly</option>
+                                </select>
+                            </div>
+                            <button type="button" className="button" style={{ alignSelf: 'flex-end', whiteSpace: 'nowrap' }}>Filter Report</button>
+                        </div>
+                    </div>
+
+                    <div className="kpi-grid" style={{ marginTop: '25px' }}>
+                        <div className="kpi-card">
+                            <div className="title">Total Revenue</div>
+                            <div className="value">₱0</div>
+                        </div>
+                        <div className="kpi-card">
+                            <div className="title">Occupancy Rate</div>
+                            <div className="value">0%</div>
+                        </div>
+                        <div className="kpi-card">
+                            <div className="title">Avg. Daily Rate (ADR)</div>
+                            <div className="value">₱0</div>
+                        </div>
+                        <div className="kpi-card">
+                            <div className="title">RevPAR</div>
+                            <div className="value">₱0</div>
+                        </div>
+                    </div>
+
+                    <div className="bordered-section" style={{ marginTop: '20px' }}>
+                        <h3 className="page-section-subtitle">Breakdown</h3>
+                        <div className="two-column-layout">
+                            <div>
+                                <h4 className="bordered-section-title">Income by Room Type</h4>
+                                <div className="chart-placeholder">[Bar Chart Placeholder]</div>
+                            </div>
+                            <div>
+                                <h4 className="bordered-section-title">Income by Payment Method</h4>
+                                <div className="chart-placeholder">[Pie Chart Placeholder: Cash, GCash, Bank]</div>
+                            </div>
+                        </div>
+
+                        <h3 className="page-section-subtitle" style={{ marginTop: '20px' }}>Summary</h3>
+                        <table className="styled-table">
+                            <thead>
+                                <tr>
+                                    <th>Category</th>
+                                    <th>Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Room Charges Summary</td>
+                                    <td>₱0.00</td>
+                                </tr>
+                                <tr>
+                                    <td>Additional Services Income</td>
+                                    <td>₱0.00</td>
+                                </tr>
+                                <tr>
+                                    <td>Refunds / Deductions</td>
+                                    <td>(₱0.00)</td>
+                                </tr>
+                                <tr>
+                                    <td>Damages Collected</td>
+                                    <td>₱0.00</td>
+                                </tr>
+                                <tr style={{ fontWeight: 700, backgroundColor: 'var(--bg-color)' }}>
+                                    <td>Gross Revenue</td>
+                                    <td>₱0.00</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <button className="button" style={{ marginTop: '25px' }}>Export Report (PDF/Excel)</button>
+                </section>
+            </main>
+        </>
     );
 }
-
-// --- SUB-COMPONENTS & STYLES ---
-
-const MetricCard = ({ title, value }) => (
-    <div style={{ 
-        flex: 1, 
-        background: 'white', 
-        padding: '20px', 
-        borderRadius: '8px', 
-        boxShadow: '0 2px 4px rgba(0,0,0,0.05)', 
-        border: '1px solid #e0e0e0',
-        textAlign: 'center'
-    }}>
-        <div style={{ fontSize: '12px', color: '#6c757d', fontWeight: 'bold', marginBottom: '5px' }}>{title}</div>
-        <div style={{ fontSize: '28px', color: '#007bff', fontWeight: 'bold' }}>{value}</div>
-    </div>
-);
-
-const SummaryRow = ({ label, amount }) => (
-    <tr style={{ borderBottom: '1px solid #eee' }}>
-        <td style={tdStyle}>{label}</td>
-        <td style={{ ...tdStyle, textAlign: 'right' }}>₱{amount.toLocaleString()}</td>
-    </tr>
-);
-
-const cardStyle = {
-    background: 'white',
-    padding: '20px',
-    borderRadius: '8px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-    border: '1px solid #e0e0e0'
-};
-
-const inputStyle = {
-    padding: '8px',
-    border: '1px solid #ccc',
-    borderRadius: '4px'
-};
-
-const btnBlue = {
-    padding: '8px 15px',
-    background: '#007bff',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontWeight: 'bold'
-};
-
-const tdStyle = {
-    padding: '12px',
-    color: '#333'
-};
