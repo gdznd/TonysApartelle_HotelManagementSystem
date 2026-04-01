@@ -4,10 +4,6 @@ import mysql.connector
 from fpdf import FPDF
 import os
 from datetime import datetime
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-import mysql.connector
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
