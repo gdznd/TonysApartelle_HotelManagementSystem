@@ -1,159 +1,216 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
+const BASE_URL = 'http://127.0.0.1:5000';
+
 export default function Payment() {
-    // --- STATE VARIABLES ---
     const [searchId, setSearchId] = useState('');
     const [bookingData, setBookingData] = useState(null);
-    
-    // Payment Form States
     const [paymentMethod, setPaymentMethod] = useState('Cash');
     const [amountToPay, setAmountToPay] = useState('');
     const [cashReceived, setCashReceived] = useState('');
     const [receiptNumber, setReceiptNumber] = useState('');
+    const [isSearching, setIsSearching] = useState(false);
+    const [isLogging, setIsLogging] = useState(false);
+    const [paymentLogged, setPaymentLogged] = useState(false); // NEW: tracks if payment was just logged
 
-    // --- HELPER: GENERATE TIMESTAMP ID ---
-    // Format: MMDDYYYYHHMMSS (e.g., 02182026184132)
+    // --- HELPER: GENERATE RECEIPT ID (MMDDYYYYHHMMSS) ---
     const generateReceiptID = () => {
         const now = new Date();
-        const pad = (num) => num.toString().padStart(2, '0');
-        
-        const month = pad(now.getMonth() + 1);
-        const day = pad(now.getDate());
-        const year = now.getFullYear();
-        const hours = pad(now.getHours());
-        const minutes = pad(now.getMinutes());
-        const seconds = pad(now.getSeconds());
-
-        return `${month}${day}${year}${hours}${minutes}${seconds}`;
+        const pad = (n) => n.toString().padStart(2, '0');
+        return `${pad(now.getMonth()+1)}${pad(now.getDate())}${now.getFullYear()}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     };
 
-    // --- SEARCH FUNCTION (MOCK) ---
-    const handleSearch = () => {
-        // In the future, this will be: axios.get(`/api/bookings/${searchId}`)
-        // For now, we simulate finding a booking:
-        if (searchId) {
+    // --- SEARCH: FETCH REAL BOOKING FROM BACKEND ---
+    const handleSearch = async () => {
+        if (!searchId.trim()) {
+            alert("Please enter a Booking ID.");
+            return;
+        }
+        setIsSearching(true);
+        setBookingData(null);
+        setPaymentLogged(false);
+        try {
+            const response = await fetch(`${BASE_URL}/api/bookings/${searchId.trim()}`);
+            if (!response.ok) {
+                alert(`Booking "${searchId}" not found.`);
+                return;
+            }
+            const result = await response.json();
+            // Expected backend shape:
+            // { id, guest_name, room_type, total_amount, amount_paid, balance }
             setBookingData({
-                id: searchId,
-                guestName: "John Doe", // Mock Data
-                roomType: "Deluxe Suite - Room 302",
-                totalAmount: 6180.00,
-                amountPaid: 0.00,
-                remainingBalance: 6180.00
+                id: result.id,
+                guestName: result.guest_name,
+                roomType: result.room_type,
+                totalAmount: parseFloat(result.total_amount),
+                amountPaid: parseFloat(result.amount_paid),
+                remainingBalance: parseFloat(result.balance),
             });
-            // Generate a fresh Receipt ID whenever we start a new transaction
             setReceiptNumber(generateReceiptID());
-            setAmountToPay(''); // Reset form
+            setAmountToPay('');
             setCashReceived('');
-        } else {
-            alert("Please enter a Booking ID");
+        } catch (error) {
+            console.error("Search error:", error);
+            alert("Could not connect to server.");
+        } finally {
+            setIsSearching(false);
         }
     };
 
+    // Allow pressing Enter in search box
+    const handleSearchKeyDown = (e) => {
+        if (e.key === 'Enter') handleSearch();
+    };
+
     // --- CALCULATE CHANGE ---
-    const changeDue = cashReceived && amountToPay 
-        ? (parseFloat(cashReceived) - parseFloat(amountToPay)).toFixed(2) 
+    const changeDue = cashReceived && amountToPay
+        ? Math.max(0, parseFloat(cashReceived) - parseFloat(amountToPay)).toFixed(2)
         : '0.00';
 
-    // --- ACTION: LOG PAYMENT ---
-    const handleLogPayment = () => {
+    // --- LOG PAYMENT: POST TO BACKEND ---
+    const handleLogPayment = async () => {
         if (!amountToPay || parseFloat(amountToPay) <= 0) {
             alert("Please enter a valid amount to pay.");
             return;
         }
-        alert(`✅ Payment Logged!\nID: ${receiptNumber}\nAmount: ₱${amountToPay}\nBalance Updated.`);
-        // Here we will eventually add axios.post('/api/payments', ...)
+        if (parseFloat(amountToPay) > bookingData.remainingBalance) {
+            alert(`Amount cannot exceed remaining balance of ₱${bookingData.remainingBalance.toLocaleString()}.`);
+            return;
+        }
+        if (paymentMethod === 'Cash' && parseFloat(cashReceived) < parseFloat(amountToPay)) {
+            alert("Cash received cannot be less than the amount to pay.");
+            return;
+        }
+
+        setIsLogging(true);
+        try {
+            const response = await fetch(`${BASE_URL}/api/payments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    booking_id: bookingData.id,
+                    receipt_number: receiptNumber,
+                    payment_method: paymentMethod,
+                    amount_paid: parseFloat(amountToPay),
+                    cash_received: parseFloat(cashReceived) || 0,
+                }),
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                alert(`Error: ${err.message || 'Failed to log payment.'}`);
+                return;
+            }
+
+            const result = await response.json();
+
+            // Update the bill summary live with new values from backend
+            setBookingData(prev => ({
+                ...prev,
+                amountPaid: parseFloat(result.new_amount_paid),
+                remainingBalance: parseFloat(result.new_balance),
+            }));
+
+            setPaymentLogged(true);
+            alert(`✅ Payment Logged!\nReceipt #: ${receiptNumber}\nAmount Paid: ₱${parseFloat(amountToPay).toLocaleString()}\nNew Balance: ₱${parseFloat(result.new_balance).toLocaleString()}`);
+
+        } catch (error) {
+            console.error("Log payment error:", error);
+            alert("Could not connect to server.");
+        } finally {
+            setIsLogging(false);
+        }
     };
 
-    // --- ACTION: ISSUE RECEIPT ---
+    // --- ISSUE PDF RECEIPT ---
     const handleIssueReceipt = () => {
-        if (!bookingData) return;
+        if (!bookingData || !paymentLogged) {
+            alert("Please log a payment first before issuing a receipt.");
+            return;
+        }
 
         const doc = new jsPDF();
-        
-        // Header
+
         doc.setFontSize(20);
         doc.text("OFFICIAL RECEIPT", 105, 20, null, null, "center");
         doc.setFontSize(12);
         doc.text("Hotel Management System", 105, 30, null, null, "center");
 
-        // Receipt Details
         doc.text(`Receipt #: ${receiptNumber}`, 14, 50);
         doc.text(`Date: ${new Date().toLocaleString()}`, 14, 58);
         doc.text(`Guest: ${bookingData.guestName}`, 14, 66);
         doc.text(`Booking Ref: ${bookingData.id}`, 14, 74);
+        doc.text(`Room: ${bookingData.roomType}`, 14, 82);
 
-        // Table
         doc.autoTable({
-            startY: 85,
+            startY: 95,
             head: [['Description', 'Amount']],
             body: [
-                ['Payment Amount', `P ${parseFloat(amountToPay).toLocaleString()}`],
+                ['Total Bill', `P ${bookingData.totalAmount.toLocaleString()}`],
                 ['Payment Method', paymentMethod],
-                ['Cash Received', `P ${parseFloat(cashReceived).toLocaleString()}`],
+                ['Amount Paid This Transaction', `P ${parseFloat(amountToPay).toLocaleString()}`],
+                ['Cash Received', `P ${parseFloat(cashReceived || 0).toLocaleString()}`],
                 ['Change Due', `P ${changeDue}`],
+                ['Remaining Balance', `P ${bookingData.remainingBalance.toLocaleString()}`],
             ],
         });
 
-        // Footer
-        doc.text("Thank you for staying with us!", 105, 160, null, null, "center");
-        
+        doc.text("Thank you for staying with us!", 105, 175, null, null, "center");
         doc.save(`Receipt_${receiptNumber}.pdf`);
     };
 
     return (
         <div style={{ padding: '20px', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", backgroundColor: '#f4f7f6', minHeight: '100vh' }}>
-            <h2 style={{ color: '#333', marginBottom: '20px' }}>Module 6: Payment & Receipt</h2>
+            <h2 style={{ color: '#333', marginBottom: '20px' }}>Module 7: Payment & Receipt</h2>
 
-            {/* --- SECTION 1: FIND BOOKING --- */}
+            {/* SECTION 1: FIND BOOKING */}
             <div style={cardStyle}>
                 <h4 style={{ color: '#007bff', marginBottom: '15px' }}>Find Booking to Pay</h4>
                 <div style={{ display: 'flex', gap: '15px', alignItems: 'flex-end' }}>
                     <div style={{ flex: 1 }}>
                         <label style={labelStyle}>Booking Reference ID</label>
-                        <input 
-                            type="text" 
-                            placeholder="e.g., BK-12345" 
+                        <input
+                            type="text"
+                            placeholder="e.g., BK-12345"
                             value={searchId}
                             onChange={(e) => setSearchId(e.target.value)}
-                            style={inputStyle} 
+                            onKeyDown={handleSearchKeyDown}
+                            style={inputStyle}
                         />
                     </div>
-                    <button onClick={handleSearch} style={btnBlue}>Find Booking</button>
+                    <button onClick={handleSearch} style={btnBlue} disabled={isSearching}>
+                        {isSearching ? 'Searching...' : 'Find Booking'}
+                    </button>
                 </div>
             </div>
 
             {bookingData && (
                 <div style={{ display: 'flex', gap: '20px', marginTop: '20px', flexWrap: 'wrap' }}>
-                    
-                    {/* --- SECTION 2: BILL SUMMARY (LEFT) --- */}
+
+                    {/* SECTION 2: BILL SUMMARY */}
                     <div style={{ ...cardStyle, flex: 1, minWidth: '300px' }}>
                         <h4 style={{ color: '#007bff', borderBottom: '1px solid #eee', paddingBottom: '10px' }}>
-                            Bill Summary (for {bookingData.guestName})
+                            Bill Summary — {bookingData.guestName}
                         </h4>
-                        
-                        <div style={{ marginTop: '15px', color: '#555', lineHeight: '1.8' }}>
+                        <div style={{ marginTop: '15px', color: '#555', lineHeight: '2' }}>
                             <div><strong>Room:</strong> {bookingData.roomType}</div>
                             <div><strong>Total Due:</strong> ₱{bookingData.totalAmount.toLocaleString()}</div>
-                            <div style={{ color: 'green' }}><strong>Amount Paid:</strong> ₱{bookingData.amountPaid.toLocaleString()}</div>
+                            <div style={{ color: '#28a745' }}><strong>Amount Paid:</strong> ₱{bookingData.amountPaid.toLocaleString()}</div>
                         </div>
-
-                        <div style={{ 
-                            marginTop: '20px', 
-                            padding: '15px', 
-                            backgroundColor: '#f8f9fa', 
-                            borderRadius: '5px',
-                            borderLeft: '4px solid #007bff'
-                        }}>
+                        <div style={{ marginTop: '20px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '5px', borderLeft: '4px solid #007bff' }}>
                             <div style={{ fontSize: '14px', color: '#666' }}>Remaining Balance</div>
-                            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#333' }}>
+                            <div style={{ fontSize: '28px', fontWeight: 'bold', color: bookingData.remainingBalance === 0 ? '#28a745' : '#333' }}>
                                 ₱{bookingData.remainingBalance.toLocaleString()}
                             </div>
+                            {bookingData.remainingBalance === 0 && (
+                                <div style={{ color: '#28a745', fontWeight: 'bold', marginTop: '5px' }}>✅ Fully Paid</div>
+                            )}
                         </div>
                     </div>
 
-                    {/* --- SECTION 3: LOG PAYMENT (RIGHT) --- */}
+                    {/* SECTION 3: LOG PAYMENT */}
                     <div style={{ ...cardStyle, flex: 1.5, minWidth: '300px' }}>
                         <h4 style={{ color: '#007bff', marginBottom: '15px' }}>Log New Payment</h4>
 
@@ -161,11 +218,7 @@ export default function Payment() {
                         <div style={rowStyle}>
                             <div style={groupStyle}>
                                 <label style={labelStyle}>Payment Method</label>
-                                <select 
-                                    value={paymentMethod} 
-                                    onChange={(e) => setPaymentMethod(e.target.value)} 
-                                    style={inputStyle}
-                                >
+                                <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={inputStyle}>
                                     <option>Cash</option>
                                     <option>Credit Card</option>
                                     <option>GCash</option>
@@ -174,11 +227,11 @@ export default function Payment() {
                             </div>
                             <div style={groupStyle}>
                                 <label style={labelStyle}>Receipt Number (Auto)</label>
-                                <input 
-                                    type="text" 
-                                    value={receiptNumber} 
-                                    readOnly 
-                                    style={{ ...inputStyle, backgroundColor: '#e9ecef', color: '#666', cursor: 'not-allowed' }} 
+                                <input
+                                    type="text"
+                                    value={receiptNumber}
+                                    readOnly
+                                    style={{ ...inputStyle, backgroundColor: '#e9ecef', color: '#666', cursor: 'not-allowed' }}
                                 />
                             </div>
                         </div>
@@ -186,47 +239,63 @@ export default function Payment() {
                         {/* Row 2: Amounts */}
                         <div style={rowStyle}>
                             <div style={groupStyle}>
-                                <label style={labelStyle}>Amount to Pay Now</label>
-                                <input 
-                                    type="number" 
+                                <label style={labelStyle}>Amount to Pay Now (₱)</label>
+                                <input
+                                    type="number"
                                     placeholder="0.00"
                                     value={amountToPay}
-                                    onChange={(e) => setAmountToPay(e.target.value)}
-                                    style={inputStyle} 
+                                    onChange={(e) => { setAmountToPay(e.target.value); setPaymentLogged(false); }}
+                                    style={inputStyle}
+                                    min="0"
+                                    max={bookingData.remainingBalance}
                                 />
                             </div>
                             <div style={groupStyle}>
-                                <label style={labelStyle}>Cash Received</label>
-                                <input 
-                                    type="number" 
-                                    placeholder="0.00" 
+                                <label style={labelStyle}>Cash Received (₱)</label>
+                                <input
+                                    type="number"
+                                    placeholder="0.00"
                                     value={cashReceived}
                                     onChange={(e) => setCashReceived(e.target.value)}
                                     style={inputStyle}
+                                    disabled={paymentMethod !== 'Cash'}
                                 />
                             </div>
                             <div style={groupStyle}>
-                                <label style={labelStyle}>Change Due</label>
-                                <input 
-                                    type="text" 
-                                    value={changeDue} 
-                                    readOnly 
-                                    style={{ ...inputStyle, backgroundColor: '#f1f3f5' }} 
+                                <label style={labelStyle}>Change Due (₱)</label>
+                                <input
+                                    type="text"
+                                    value={paymentMethod === 'Cash' ? changeDue : 'N/A'}
+                                    readOnly
+                                    style={{ ...inputStyle, backgroundColor: '#f1f3f5' }}
                                 />
                             </div>
                         </div>
 
                         {/* Row 3: Buttons */}
                         <div style={{ display: 'flex', gap: '15px', marginTop: '25px' }}>
-                            <button onClick={handleLogPayment} style={{ ...btnBase, backgroundColor: '#28a745' }}>
-                                ✅ Log Payment
+                            <button
+                                onClick={handleLogPayment}
+                                style={{ ...btnBase, backgroundColor: isLogging ? '#aaa' : '#28a745' }}
+                                disabled={isLogging || bookingData.remainingBalance === 0}
+                            >
+                                {isLogging ? 'Saving...' : '✅ Log Payment'}
                             </button>
-                            <button onClick={handleIssueReceipt} style={{ ...btnBase, backgroundColor: '#17a2b8' }}>
+                            <button
+                                onClick={handleIssueReceipt}
+                                style={{ ...btnBase, backgroundColor: paymentLogged ? '#17a2b8' : '#aaa' }}
+                                disabled={!paymentLogged}
+                                title={!paymentLogged ? 'Log a payment first' : 'Download PDF receipt'}
+                            >
                                 📄 Issue Receipt
                             </button>
                         </div>
+                        {!paymentLogged && (
+                            <p style={{ fontSize: '12px', color: '#999', marginTop: '8px' }}>
+                                * Log a payment above to enable receipt download.
+                            </p>
+                        )}
                     </div>
-
                 </div>
             )}
         </div>
@@ -234,56 +303,10 @@ export default function Payment() {
 }
 
 // --- STYLES ---
-const cardStyle = {
-    background: 'white',
-    padding: '25px',
-    borderRadius: '10px',
-    boxShadow: '0 4px 6px rgba(0,0,0,0.05)',
-    border: '1px solid #eaeaea'
-};
-
-const labelStyle = {
-    display: 'block',
-    marginBottom: '8px',
-    fontSize: '13px',
-    fontWeight: '600',
-    color: '#444'
-};
-
-const inputStyle = {
-    width: '100%',
-    padding: '10px 12px',
-    borderRadius: '6px',
-    border: '1px solid #ccc',
-    fontSize: '14px',
-    boxSizing: 'border-box' // Important for padding
-};
-
-const rowStyle = {
-    display: 'flex',
-    gap: '15px',
-    marginBottom: '15px'
-};
-
-const groupStyle = {
-    flex: 1
-};
-
-const btnBase = {
-    flex: 1,
-    padding: '12px',
-    color: 'white',
-    border: 'none',
-    borderRadius: '6px',
-    fontSize: '15px',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    transition: 'background 0.2s'
-};
-
-const btnBlue = {
-    ...btnBase,
-    backgroundColor: '#007bff',
-    flex: 'none', // Don't stretch
-    width: '150px'
-};
+const cardStyle = { background: 'white', padding: '25px', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)', border: '1px solid #eaeaea' };
+const labelStyle = { display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: '600', color: '#444' };
+const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #ccc', fontSize: '14px', boxSizing: 'border-box' };
+const rowStyle = { display: 'flex', gap: '15px', marginBottom: '15px' };
+const groupStyle = { flex: 1 };
+const btnBase = { flex: 1, padding: '12px', color: 'white', border: 'none', borderRadius: '6px', fontSize: '15px', fontWeight: 'bold', cursor: 'pointer' };
+const btnBlue = { ...btnBase, backgroundColor: '#007bff', flex: 'none', width: '150px' };

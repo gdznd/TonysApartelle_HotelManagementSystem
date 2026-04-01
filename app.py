@@ -419,6 +419,142 @@ def process_payment():
     finally:
         pass
 
+# ===========================================================
+# MODULE 7 — Payment & Receipt
+# ===========================================================
+
+@app.route('/api/bookings/<booking_id>', methods=['GET'])
+def get_booking(booking_id):
+    """
+    Searched by Module 7's 'Find Booking' button.
+    Returns booking + current payment status so the frontend
+    can show the correct remaining balance.
+
+    Expected response shape:
+    {
+      "id": "BK-001",
+      "guest_name": "Juan Dela Cruz",
+      "room_type": "Deluxe Suite - Room 302",
+      "total_amount": 6180.00,
+      "amount_paid": 0.00,
+      "balance": 6180.00
+    }
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # JOIN bookings → rooms to get room_type
+        # JOIN payments (or SUM) to get how much has already been paid
+        cursor.execute("""
+            SELECT
+                b.id,
+                b.guest_name,
+                CONCAT(r.room_type, ' - Room ', r.room_number) AS room_type,
+                b.total_amount,
+                COALESCE(SUM(p.amount_paid), 0)            AS amount_paid,
+                b.total_amount - COALESCE(SUM(p.amount_paid), 0) AS balance
+            FROM bookings b
+            LEFT JOIN rooms r ON b.room_id = r.id
+            LEFT JOIN payments p ON p.booking_id = b.id
+            WHERE b.id = %s
+            GROUP BY b.id, b.guest_name, r.room_type, r.room_number, b.total_amount
+        """, (booking_id,))
+        booking = cursor.fetchone()
+        if not booking:
+            return jsonify({"message": "Booking not found"}), 404
+        return jsonify(booking), 200
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.route('/api/payments', methods=['POST'])
+def log_payment():
+    """
+    Called when staff clicks 'Log Payment' in Module 7.
+    Inserts a new row into the payments table.
+
+    Expected request body:
+    {
+      "booking_id": "BK-001",
+      "receipt_number": "04022026183045",
+      "payment_method": "Cash",
+      "amount_paid": 3000.00,
+      "cash_received": 3000.00
+    }
+
+    Returns:
+    {
+      "message": "Payment logged",
+      "new_amount_paid": 3000.00,
+      "new_balance": 3180.00
+    }
+    """
+    data = request.get_json()
+    booking_id    = data.get('booking_id')
+    receipt_number = data.get('receipt_number')
+    payment_method = data.get('payment_method')
+    amount_paid   = float(data.get('amount_paid', 0))
+    cash_received = float(data.get('cash_received', 0))
+
+    if not booking_id or amount_paid <= 0:
+        return jsonify({"message": "Invalid payment data"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # 1. Get current booking total
+        cursor.execute("SELECT total_amount FROM bookings WHERE id = %s", (booking_id,))
+        booking = cursor.fetchone()
+        if not booking:
+            return jsonify({"message": "Booking not found"}), 404
+
+        total_amount = float(booking['total_amount'])
+
+        # 2. Get sum of previous payments
+        cursor.execute(
+            "SELECT COALESCE(SUM(amount_paid), 0) AS paid FROM payments WHERE booking_id = %s",
+            (booking_id,)
+        )
+        prev = cursor.fetchone()
+        previous_paid = float(prev['paid'])
+
+        new_total_paid = previous_paid + amount_paid
+        new_balance    = total_amount - new_total_paid
+
+        # 3. Determine status
+        if new_balance <= 0:
+            status = 'Fully Paid'
+        elif new_total_paid > 0:
+            status = 'Partially Paid'
+        else:
+            status = 'Unpaid'
+
+        # 4. Insert payment row
+        cursor.execute("""
+            INSERT INTO payments
+                (booking_id, receipt_number, payment_method, amount_paid,
+                 cash_received, balance, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (booking_id, receipt_number, payment_method, amount_paid,
+              cash_received, max(new_balance, 0), status))
+
+        conn.commit()
+
+        return jsonify({
+            "message": "Payment logged",
+            "new_amount_paid": new_total_paid,
+            "new_balance": max(new_balance, 0),
+            "status": status
+        }), 200
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"message": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
 # --- MODULE 8: CHECK-IN MODULE ---
 
 # 1. Search for a Booking (To populate the form)
@@ -645,103 +781,104 @@ def perform_checkout():
     finally:
         conn.close()
 
-# --- MODULE 10: UPDATE PAYMENT ---
+# ===========================================================
+# MODULE 11 — Payment Update
+# ===========================================================
 
-# 1. GET PAYMENT STATUS (Search)
-@app.route('/api/payments/status', methods=['GET'])
-def get_payment_status():
-    query = request.args.get('q', '')
+@app.route('/api/payments', methods=['GET'])
+def get_all_payments():
+    """
+    Called on load by Module 11 to populate the table.
+    Returns all payment records with guest info joined in.
+
+    Expected response: list of objects shaped like:
+    [
+      {
+        "id": 1,
+        "booking_id": "BK-001",
+        "guest_name": "Juan Dela Cruz",
+        "room_id": "101",
+        "total_amount": 6180.00,
+        "amount_paid": 3000.00,
+        "balance": 3180.00,
+        "status": "Partially Paid"
+      }, ...
+    ]
+
+    NOTE: If your payments table already stores guest_name and room_id,
+    simplify the query by removing the JOIN.
+    """
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-
     try:
-        # A. Find the Booking
-        # We also grab room info to confirm it's the right person
-        sql_booking = """
-            SELECT b.id, b.booking_reference, b.first_name, b.last_name, b.total_price,
-                   r.room_number
-            FROM bookings b
-            JOIN rooms r ON b.room_id = r.id
-            WHERE b.booking_reference = %s OR b.first_name LIKE %s
-        """
-        search_term = f"%{query}%"
-        cursor.execute(sql_booking, (query, search_term))
-        booking = cursor.fetchone()
-
-        if not booking:
-            return jsonify({"error": "Booking not found"}), 404
-
-        booking_id = booking['id']
-
-        # B. Calculate "Additional Charges" (Services + Damages)
-        # 1. Services
-        cursor.execute("SELECT SUM(service_charge) as total FROM service_requests WHERE booking_id = %s", (booking_id,))
-        res_services = cursor.fetchone()
-        service_total = float(res_services['total'] or 0)
-
-        # 2. Damages (from Checkout module, if any exists yet)
-        # Note: If checkout hasn't happened, this might be 0, which is fine.
-        # We check if the 'checkouts' table exists first to avoid errors if you skipped that step temporarily.
-        damage_total = 0.0
-        cursor.execute("SHOW TABLES LIKE 'checkouts'")
-        if cursor.fetchone():
-            cursor.execute("SELECT SUM(damage_charge) as total FROM checkouts WHERE booking_id = %s", (booking_id,))
-            res_damages = cursor.fetchone()
-            damage_total = float(res_damages['total'] or 0)
-
-        additional_charges = service_total + damage_total
-
-        # C. Calculate Total Paid So Far (Sum of Module 6 payments + any updates)
-        cursor.execute("SELECT SUM(amount) as total FROM payments WHERE booking_id = %s", (booking_id,))
-        res_payments = cursor.fetchone()
-        total_paid_so_far = float(res_payments['total'] or 0)
-
-        # D. Response Data
-        response = {
-            "booking_id": booking['id'],
-            "guest_name": f"{booking['first_name']} {booking['last_name']}",
-            "reference": booking['booking_reference'],
-            "original_bill": float(booking['total_price']),
-            "additional_charges": additional_charges,
-            "total_amount": float(booking['total_price']) + additional_charges,
-            "total_paid": total_paid_so_far
-        }
-        
-        return jsonify(response)
-
-    except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"error": str(e)}), 500
+        cursor.execute("""
+            SELECT
+                p.id,
+                p.booking_id,
+                b.guest_name,
+                b.room_id,
+                b.total_amount,
+                p.amount_paid,
+                p.balance,
+                p.status
+            FROM payments p
+            JOIN bookings b ON p.booking_id = b.id
+            ORDER BY p.id DESC
+        """)
+        # If multiple payment rows exist per booking, this returns each transaction.
+        # If you want one row per booking (latest), change to a subquery or GROUP BY.
+        payments = cursor.fetchall()
+        return jsonify(payments), 200
     finally:
+        cursor.close()
         conn.close()
 
-# 2. SUBMIT UPDATE (Add New Payment)
-@app.route('/api/payments/update', methods=['POST'])
+
+@app.route('/api/payments/update', methods=['PUT'])
 def update_payment():
-    data = request.json
+    """
+    Called when staff clicks 'Save Update' in Module 11.
+    Updates amount_paid, balance, and status for a payment record.
+
+    Expected request body:
+    {
+      "id": 1,
+      "amount_paid": 5000.00,
+      "balance": 1180.00,
+      "status": "Partially Paid"
+    }
+    """
+    data = request.get_json()
+    payment_id  = data.get('id')
+    amount_paid = data.get('amount_paid')
+    balance     = data.get('balance')
+    status      = data.get('status')
+
+    if payment_id is None or amount_paid is None:
+        return jsonify({"message": "Missing required fields"}), 400
+
     conn = get_db_connection()
     cursor = conn.cursor()
-
     try:
-        # We insert a NEW row into 'payments'. 
-        # This keeps a history (e.g., Row 1: Deposit 500, Row 2: Final Payment 1000)
-        # This is safer than editing the old row because you lose the record of the deposit.
-        sql = """
-            INSERT INTO payments (booking_id, amount, payment_method, payment_date, remarks)
-            VALUES (%s, %s, %s, NOW(), %s)
-        """
-        cursor.execute(sql, (
-            data['booking_id'],
-            data['amount_to_pay'],
-            data['payment_method'],
-            data['remarks']
-        ))
+        cursor.execute("""
+            UPDATE payments
+            SET amount_paid = %s,
+                balance     = %s,
+                status      = %s
+            WHERE id = %s
+        """, (amount_paid, balance, status, payment_id))
         conn.commit()
-        return jsonify({"message": "Payment Updated Successfully"}), 200
+
+        if cursor.rowcount == 0:
+            return jsonify({"message": "Payment record not found"}), 404
+
+        return jsonify({"message": "Payment updated successfully"}), 200
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        conn.rollback()
+        return jsonify({"message": str(e)}), 500
     finally:
+        cursor.close()
         conn.close()
 
 # --- MODULE 11: INVENTORY REPORT ---
@@ -784,42 +921,158 @@ def get_inventory_report():
     conn.close()
     return jsonify(inventory_data)
 
-# ==========================================
-# MODULE 13: INCOME REPORT (Jesiah Opelena)
-# ==========================================
+# ===========================================================
+# MODULE 13 — Income Report Dashboard
+# ===========================================================
+
 @app.route('/api/reports/income', methods=['GET'])
 def get_income_report():
+    """
+    Called by Module 13 on load and on every 'Filter Report' click.
+    Accepts optional query params: start_date, end_date, filter_by
+
+    Example: /api/reports/income?start_date=2026-01-01&end_date=2026-03-31&filter_by=Monthly
+
+    Expected response shape:
+    {
+      "total_revenue": 45000.00,
+      "occupancy_rate": 72.5,
+      "adr": 2250.00,
+      "revpar": 1631.25,
+      "room_charges": 40000.00,
+      "services_income": 5000.00,
+      "refunds": 500.00,
+      "damages_collected": 200.00,
+      "income_by_room_type": [
+          {"room_type": "Standard", "total": 15000},
+          {"room_type": "Deluxe",   "total": 25000},
+          {"room_type": "Suite",    "total": 5000}
+      ],
+      "income_by_payment_method": [
+          {"payment_method": "Cash",     "total": 20000},
+          {"payment_method": "GCash",    "total": 15000},
+          {"payment_method": "Bank Transfer", "total": 10000}
+      ]
+    }
+    """
+    start_date = request.args.get('start_date')  # e.g. "2026-01-01"
+    end_date   = request.args.get('end_date')    # e.g. "2026-03-31"
+    # filter_by is used for future grouping logic (Daily/Weekly/Monthly)
+    # filter_by = request.args.get('filter_by', 'Monthly')
+
     conn = get_db_connection()
-    if not conn: return jsonify({"error": "No DB Connection"}), 500
-    
+    cursor = conn.cursor(dictionary=True)
     try:
-        cursor = conn.cursor(dictionary=True)
-        query = """
-            SELECT 
-                DATE(p.payment_date) as date,
-                SUM(p.amount) as total_income,
-                COUNT(p.payment_id) as transaction_count,
-                r.room_type
+        # Build optional date filter clause
+        date_filter = ""
+        params = []
+        if start_date and end_date:
+            date_filter = "WHERE p.created_at BETWEEN %s AND %s"
+            params = [start_date, end_date + ' 23:59:59']
+        elif start_date:
+            date_filter = "WHERE p.created_at >= %s"
+            params = [start_date]
+        elif end_date:
+            date_filter = "WHERE p.created_at <= %s"
+            params = [end_date + ' 23:59:59']
+
+        # --- 1. TOTAL REVENUE (sum of all amount_paid in range) ---
+        cursor.execute(f"""
+            SELECT COALESCE(SUM(p.amount_paid), 0) AS total_revenue
+            FROM payments p {date_filter}
+        """, params)
+        total_revenue = float(cursor.fetchone()['total_revenue'])
+
+        # --- 2. ROOM CHARGES (payments linked to room bookings only) ---
+        # Adjust category filter to match your data. If you don't have categories,
+        # just use total_revenue for room_charges.
+        cursor.execute(f"""
+            SELECT COALESCE(SUM(p.amount_paid), 0) AS room_charges
             FROM payments p
-            LEFT JOIN bookings b ON p.booking_id = b.id
-            LEFT JOIN rooms r ON b.room_id = r.id
-            GROUP BY date, r.room_type
-            ORDER BY date DESC
-        """
-        cursor.execute(query)
-        report_data = cursor.fetchall()
-        
-        # Ensure numbers and dates are JSON-friendly for the React Table
-        for row in report_data:
-            row['date'] = str(row['date'])
-            row['total_income'] = float(row['total_income']) if row['total_income'] else 0.0
-        
-        return jsonify(report_data), 200
+            JOIN bookings b ON p.booking_id = b.id
+            {date_filter}
+        """, params)
+        room_charges = float(cursor.fetchone()['room_charges'])
+
+        # --- 3. SERVICES INCOME ---
+        # If you have a separate guest_requests/services table, query it here.
+        # For now, defaults to 0. Replace with real query when Module 9 is ready.
+        services_income = 0.00
+
+        # --- 4. REFUNDS (negative payments or a refunds column) ---
+        # If you track refunds as negative amount_paid or a separate table, query here.
+        refunds = 0.00
+
+        # --- 5. DAMAGES COLLECTED ---
+        damages_collected = 0.00
+
+        # --- 6. OCCUPANCY RATE ---
+        # occupied rooms / total rooms * 100
+        cursor.execute("SELECT COUNT(*) AS total FROM rooms")
+        total_rooms = cursor.fetchone()['total'] or 1
+
+        cursor.execute("""
+            SELECT COUNT(DISTINCT room_id) AS occupied
+            FROM bookings
+            WHERE status IN ('checked_in', 'Checked In')
+        """)
+        occupied_rooms = cursor.fetchone()['occupied']
+        occupancy_rate = (occupied_rooms / total_rooms) * 100
+
+        # --- 7. ADR (Average Daily Rate) = total revenue / number of bookings ---
+        cursor.execute(f"""
+            SELECT COUNT(DISTINCT p.booking_id) AS booking_count
+            FROM payments p {date_filter}
+        """, params)
+        booking_count = cursor.fetchone()['booking_count'] or 1
+        adr = total_revenue / booking_count
+
+        # --- 8. RevPAR = ADR * occupancy_rate / 100 ---
+        revpar = adr * (occupancy_rate / 100)
+
+        # --- 9. INCOME BY ROOM TYPE ---
+        cursor.execute(f"""
+            SELECT
+                r.room_type,
+                COALESCE(SUM(p.amount_paid), 0) AS total
+            FROM payments p
+            JOIN bookings b ON p.booking_id = b.id
+            JOIN rooms r ON b.room_id = r.id
+            {date_filter}
+            GROUP BY r.room_type
+            ORDER BY total DESC
+        """, params)
+        income_by_room_type = cursor.fetchall()
+
+        # --- 10. INCOME BY PAYMENT METHOD ---
+        cursor.execute(f"""
+            SELECT
+                p.payment_method,
+                COALESCE(SUM(p.amount_paid), 0) AS total
+            FROM payments p {date_filter}
+            GROUP BY p.payment_method
+            ORDER BY total DESC
+        """, params)
+        income_by_payment_method = cursor.fetchall()
+
+        return jsonify({
+            "total_revenue":             total_revenue,
+            "occupancy_rate":            round(occupancy_rate, 2),
+            "adr":                       round(adr, 2),
+            "revpar":                    round(revpar, 2),
+            "room_charges":              room_charges,
+            "services_income":           services_income,
+            "refunds":                   refunds,
+            "damages_collected":         damages_collected,
+            "income_by_room_type":       income_by_room_type,
+            "income_by_payment_method":  income_by_payment_method,
+        }), 200
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"message": str(e)}), 500
     finally:
+        cursor.close()
         conn.close()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
-# Keep your if __name__ == '__main__': block below this
