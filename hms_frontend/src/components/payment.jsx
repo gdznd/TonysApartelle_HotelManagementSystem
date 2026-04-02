@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 
 const BASE_URL = 'http://127.0.0.1:5000';
 
@@ -32,7 +32,7 @@ export default function Payment() {
         setBookingData(null);
         setPaymentLogged(false);
         try {
-            const response = await fetch(`${BASE_URL}/api/bookings/${searchId.trim()}`);
+            const response = await fetch(`${BASE_URL}/api/bookings/ref/${searchId.trim()}`);
             if (!response.ok) {
                 alert(`Booking "${searchId}" not found.`);
                 return;
@@ -42,6 +42,7 @@ export default function Payment() {
             // { id, guest_name, room_type, total_amount, amount_paid, balance }
             setBookingData({
                 id: result.id,
+                booking_reference: result.booking_reference,
                 guestName: result.guest_name,
                 roomType: result.room_type,
                 totalAmount: parseFloat(result.total_amount),
@@ -65,7 +66,7 @@ export default function Payment() {
     };
 
     // --- CALCULATE CHANGE ---
-    const changeDue = cashReceived && amountToPay
+    const changeDue = (parseFloat(cashReceived) > 0 && parseFloat(amountToPay) > 0)
         ? Math.max(0, parseFloat(cashReceived) - parseFloat(amountToPay)).toFixed(2)
         : '0.00';
 
@@ -90,7 +91,7 @@ export default function Payment() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    booking_id: bookingData.id,
+                    booking_id: bookingData.booking_reference,
                     receipt_number: receiptNumber,
                     payment_method: paymentMethod,
                     amount_paid: parseFloat(amountToPay),
@@ -144,7 +145,7 @@ export default function Payment() {
         doc.text(`Booking Ref: ${bookingData.id}`, 14, 74);
         doc.text(`Room: ${bookingData.roomType}`, 14, 82);
 
-        doc.autoTable({
+        autoTable(doc, {
             startY: 95,
             head: [['Description', 'Amount']],
             body: [
