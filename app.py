@@ -4,16 +4,12 @@ import mysql.connector
 from fpdf import FPDF
 import os
 from datetime import datetime
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-import mysql.connector
-import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "*", "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]}})
 
 # --- DATABASE CONFIGURATION (TiDB Cloud) ---
 db_config = {
@@ -248,8 +244,8 @@ def remove_room_supply(id):
     conn.close()
     return jsonify({"message": "Removed"})
 
-if __name__ == '__main__':
-    app.run(debug=True)
+# if __name__ == '__main__':
+#     app.run(debug=True)
 
 # --- MODULE 5: BOOKING ROUTES ---
 
@@ -279,17 +275,17 @@ def create_booking():
     
     sql = """
         INSERT INTO bookings 
-        (first_name, last_name, contact_number, email, address, gender, 
-         room_id, check_in, check_out, adults, children, 
-         total_price, booking_type, status, special_requests)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (booking_reference, first_name, last_name, contact_number, email, address, gender, 
+        room_id, check_in, check_out, adults, children, 
+        total_price, booking_type, status, special_requests)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
-    
     cursor.execute(sql, (
-        data['first_name'], data['last_name'], data['contact_number'], 
+        data['booking_reference'],
+        data['first_name'], data['last_name'], data['contact_number'],
         data['email'], data['address'], data['gender'],
-        data['room_id'], data['check_in'], data['check_out'], 
-        data['adults'], data['children'], data['total_price'], 
+        data['room_id'], data['check_in'], data['check_out'],
+        data['adults'], data['children'], data['total_price'],
         data['booking_type'], data['status'], data['special_requests']
     ))
     
@@ -323,105 +319,205 @@ def delete_booking(id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- MODULE 6: PAYMENT & RECEIPT (FINALIZED) ---
+# # --- MODULE 6: PAYMENT & RECEIPT (FINALIZED) ---
+
+# @app.route('/api/payments', methods=['POST'])
+# def process_payment():
+#     conn = get_db_connection()
+#     cursor = conn.cursor()
+#     data = request.json
+    
+#     # 1. LOG THE PAYMENT TO MYSQL
+#     # We let MySQL handle the timestamp automatically for the database record
+#     sql = """
+#         INSERT INTO payments (booking_id, amount, payment_method, transaction_ref)
+#         VALUES (%s, %s, %s, %s)
+#     """
+#     cursor.execute(sql, (
+#         data['booking_id'], 
+#         data['amount'], 
+#         data['payment_method'], 
+#         data['transaction_ref']
+#     ))
+    
+#     conn.commit()
+#     conn.close()
+
+#     # 2. GENERATE THE PDF RECEIPT
+#     pdf = FPDF()
+#     pdf.add_page()
+    
+#     # --- HEADER ---
+#     pdf.set_font("Arial", 'B', 16)
+#     pdf.cell(190, 10, txt="TONY'S APARTELLE", ln=True, align='C')
+    
+#     pdf.set_font("Arial", size=10)
+#     pdf.cell(190, 5, txt="WG6V+RX4, Butuan City-Malaybalay Rd", ln=True, align='C')
+#     pdf.cell(190, 5, txt="Butuan City, 8600 Agusan del Norte", ln=True, align='C')
+#     pdf.cell(190, 5, txt="Phone: 0909 392 9516", ln=True, align='C')
+    
+#     pdf.ln(10)
+#     pdf.line(10, 35, 200, 35) # Horizontal line
+#     pdf.ln(5)
+
+#     # --- RECEIPT DETAILS ---
+#     pdf.set_font("Arial", 'B', 12)
+#     pdf.cell(190, 10, txt="OFFICIAL RECEIPT", ln=True, align='C')
+#     pdf.ln(5)
+
+#     pdf.set_font("Arial", size=11)
+    
+#     # Left Column (Guest Info)
+#     pdf.cell(100, 8, txt=f"Guest Name: {data['guest_name']}", ln=0)
+#     # Right Column (Date)
+#     current_date = datetime.now().strftime("%B %d, %Y %I:%M %p")
+#     pdf.cell(90, 8, txt=f"Date: {current_date}", ln=1, align='R')
+
+#     pdf.cell(100, 8, txt=f"Booking Ref: #{data['booking_id']}", ln=1)
+#     pdf.cell(100, 8, txt=f"Room: {data['room_details']}", ln=1)
+    
+#     pdf.ln(10)
+
+#     # --- PAYMENT TABLE ---
+#     # Header
+#     pdf.set_fill_color(240, 240, 240) # Light gray background
+#     pdf.set_font("Arial", 'B', 11)
+#     pdf.cell(130, 10, txt="Description", border=1, fill=True)
+#     pdf.cell(60, 10, txt="Amount (PHP)", border=1, fill=True, ln=True)
+    
+#     # Rows
+#     pdf.set_font("Arial", size=11)
+#     pdf.cell(130, 10, txt="Accomodation Charge", border=1)
+#     # Note: 'P' is not always supported in standard fonts, so we use 'PHP ' or just the number
+#     pdf.cell(60, 10, txt=f"PHP {float(data['amount']):,.2f}", border=1, ln=True)
+    
+#     # --- TOTALS ---
+#     pdf.ln(5)
+#     pdf.set_font("Arial", 'B', 12)
+#     pdf.cell(130, 10, txt="TOTAL PAID", border=0, align='R')
+#     pdf.cell(60, 10, txt=f"PHP {float(data['amount']):,.2f}", border=1, ln=True, align='C')
+
+#     pdf.set_font("Arial", 'I', 10)
+#     pdf.ln(5)
+#     pdf.cell(190, 8, txt=f"Paid via: {data['payment_method']}", ln=True, align='R')
+    
+#     if data['transaction_ref']:
+#          pdf.cell(190, 8, txt=f"Ref No: {data['transaction_ref']}", ln=True, align='R')
+
+#     # --- FOOTER ---
+#     pdf.ln(20)
+#     pdf.set_font("Arial", size=10)
+#     pdf.cell(190, 10, txt="This document serves as an official acknowledgement of payment.", align='C')
+#     pdf.cell(190, 5, txt="Thank you for choosing Tony's Apartelle!", align='C')
+
+#     # 3. SAVE AND SEND
+#     filename = f"receipt_{data['booking_id']}.pdf"
+#     pdf.output(filename)
+    
+#     try:
+#         return send_file(filename, as_attachment=True)
+#     finally:
+#         pass
+
+# ===========================================================
+# MODULE 7 — Payment & Receipt
+# ===========================================================
+
+@app.route('/api/bookings/ref/<booking_id>', methods=['GET'])
+def get_booking(booking_id):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("""
+            SELECT
+                b.id,
+                b.booking_reference,
+                CONCAT(b.first_name, ' ', b.last_name)         AS guest_name,
+                CONCAT(r.room_type, ' - Room ', r.room_number) AS room_type,
+                b.total_price                                   AS total_amount,
+                COALESCE(SUM(p.amount_paid), 0)                AS amount_paid,
+                b.total_price - COALESCE(SUM(p.amount_paid), 0) AS balance
+            FROM bookings b
+            LEFT JOIN rooms r ON b.room_id = r.id
+            LEFT JOIN payments p ON p.booking_id = b.id
+            WHERE b.booking_reference = %s
+            GROUP BY b.id, b.first_name, b.last_name,
+                     r.room_type, r.room_number, b.total_price
+        """, (booking_id,))
+        booking = cursor.fetchone()
+        if not booking:
+            return jsonify({"message": "Booking not found"}), 404
+        return jsonify(booking), 200
+    except Exception as e:
+        return jsonify({"message": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
 
 @app.route('/api/payments', methods=['POST'])
-def process_payment():
+def log_payment():
+    data = request.get_json()
+    booking_id     = data.get('booking_id')
+    receipt_number = data.get('receipt_number')
+    payment_method = data.get('payment_method')
+    amount_paid    = float(data.get('amount_paid', 0))
+    cash_received  = float(data.get('cash_received', 0))
+
+    if not booking_id or amount_paid <= 0:
+        return jsonify({"message": "Invalid payment data"}), 400
+
     conn = get_db_connection()
-    cursor = conn.cursor()
-    data = request.json
-    
-    # 1. LOG THE PAYMENT TO MYSQL
-    # We let MySQL handle the timestamp automatically for the database record
-    sql = """
-        INSERT INTO payments (booking_id, amount, payment_method, transaction_ref)
-        VALUES (%s, %s, %s, %s)
-    """
-    cursor.execute(sql, (
-        data['booking_id'], 
-        data['amount'], 
-        data['payment_method'], 
-        data['transaction_ref']
-    ))
-    
-    conn.commit()
-    conn.close()
-
-    # 2. GENERATE THE PDF RECEIPT
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # --- HEADER ---
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(190, 10, txt="TONY'S APARTELLE", ln=True, align='C')
-    
-    pdf.set_font("Arial", size=10)
-    pdf.cell(190, 5, txt="WG6V+RX4, Butuan City-Malaybalay Rd", ln=True, align='C')
-    pdf.cell(190, 5, txt="Butuan City, 8600 Agusan del Norte", ln=True, align='C')
-    pdf.cell(190, 5, txt="Phone: 0909 392 9516", ln=True, align='C')
-    
-    pdf.ln(10)
-    pdf.line(10, 35, 200, 35) # Horizontal line
-    pdf.ln(5)
-
-    # --- RECEIPT DETAILS ---
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(190, 10, txt="OFFICIAL RECEIPT", ln=True, align='C')
-    pdf.ln(5)
-
-    pdf.set_font("Arial", size=11)
-    
-    # Left Column (Guest Info)
-    pdf.cell(100, 8, txt=f"Guest Name: {data['guest_name']}", ln=0)
-    # Right Column (Date)
-    current_date = datetime.now().strftime("%B %d, %Y %I:%M %p")
-    pdf.cell(90, 8, txt=f"Date: {current_date}", ln=1, align='R')
-
-    pdf.cell(100, 8, txt=f"Booking Ref: #{data['booking_id']}", ln=1)
-    pdf.cell(100, 8, txt=f"Room: {data['room_details']}", ln=1)
-    
-    pdf.ln(10)
-
-    # --- PAYMENT TABLE ---
-    # Header
-    pdf.set_fill_color(240, 240, 240) # Light gray background
-    pdf.set_font("Arial", 'B', 11)
-    pdf.cell(130, 10, txt="Description", border=1, fill=True)
-    pdf.cell(60, 10, txt="Amount (PHP)", border=1, fill=True, ln=True)
-    
-    # Rows
-    pdf.set_font("Arial", size=11)
-    pdf.cell(130, 10, txt="Accomodation Charge", border=1)
-    # Note: 'P' is not always supported in standard fonts, so we use 'PHP ' or just the number
-    pdf.cell(60, 10, txt=f"PHP {float(data['amount']):,.2f}", border=1, ln=True)
-    
-    # --- TOTALS ---
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(130, 10, txt="TOTAL PAID", border=0, align='R')
-    pdf.cell(60, 10, txt=f"PHP {float(data['amount']):,.2f}", border=1, ln=True, align='C')
-
-    pdf.set_font("Arial", 'I', 10)
-    pdf.ln(5)
-    pdf.cell(190, 8, txt=f"Paid via: {data['payment_method']}", ln=True, align='R')
-    
-    if data['transaction_ref']:
-         pdf.cell(190, 8, txt=f"Ref No: {data['transaction_ref']}", ln=True, align='R')
-
-    # --- FOOTER ---
-    pdf.ln(20)
-    pdf.set_font("Arial", size=10)
-    pdf.cell(190, 10, txt="This document serves as an official acknowledgement of payment.", align='C')
-    pdf.cell(190, 5, txt="Thank you for choosing Tony's Apartelle!", align='C')
-
-    # 3. SAVE AND SEND
-    filename = f"receipt_{data['booking_id']}.pdf"
-    pdf.output(filename)
-    
+    cursor = conn.cursor(dictionary=True)
     try:
-        return send_file(filename, as_attachment=True)
+        # 1. Get booking using booking_reference, fetch integer PK and total_price
+        cursor.execute("SELECT id, total_price FROM bookings WHERE booking_reference = %s", (booking_id,))
+        booking = cursor.fetchone()
+        if not booking:
+            return jsonify({"message": "Booking not found"}), 404
+
+        db_booking_id = booking['id']
+        total_amount  = float(booking['total_price'])
+
+        # 2. Get sum of previous payments using integer PK
+        cursor.execute(
+            "SELECT COALESCE(SUM(amount_paid), 0) AS paid FROM payments WHERE booking_id = %s",
+            (db_booking_id,)
+        )
+        previous_paid  = float(cursor.fetchone()['paid'])
+        new_total_paid = previous_paid + amount_paid
+        new_balance    = total_amount - new_total_paid
+
+        # 3. Determine status
+        if new_balance <= 0:
+            status = 'Fully Paid'
+        elif new_total_paid > 0:
+            status = 'Partially Paid'
+        else:
+            status = 'Unpaid'
+
+        # 4. Insert payment row using integer PK
+        cursor.execute("""
+            INSERT INTO payments
+                (booking_id, receipt_number, payment_method, amount_paid,
+                 cash_received, balance, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (db_booking_id, receipt_number, payment_method, amount_paid,
+              cash_received, max(new_balance, 0), status))
+
+        conn.commit()
+        return jsonify({
+            "message":         "Payment logged",
+            "new_amount_paid": new_total_paid,
+            "new_balance":     max(new_balance, 0),
+            "status":          status
+        }), 200
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"message": str(e)}), 500
     finally:
-        pass
+        cursor.close()
+        conn.close()
 
 # --- MODULE 8: CHECK-IN MODULE ---
 
@@ -649,244 +745,237 @@ def perform_checkout():
     finally:
         conn.close()
 
-# --- MODULE 10: UPDATE PAYMENT ---
+# ===========================================================
+# MODULE 11 — Payment Update
+# ===========================================================
 
-# 1. GET PAYMENT STATUS (Search)
-@app.route('/api/payments/status', methods=['GET'])
-def get_payment_status():
-    query = request.args.get('q', '')
+@app.route('/api/payments', methods=['GET'])
+def get_all_payments():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-
     try:
-        # A. Find the Booking
-        # We also grab room info to confirm it's the right person
-        sql_booking = """
-            SELECT b.id, b.booking_reference, b.first_name, b.last_name, b.total_price,
-                   r.room_number
-            FROM bookings b
-            JOIN rooms r ON b.room_id = r.id
-            WHERE b.booking_reference = %s OR b.first_name LIKE %s
-        """
-        search_term = f"%{query}%"
-        cursor.execute(sql_booking, (query, search_term))
-        booking = cursor.fetchone()
-
-        if not booking:
-            return jsonify({"error": "Booking not found"}), 404
-
-        booking_id = booking['id']
-
-        # B. Calculate "Additional Charges" (Services + Damages)
-        # 1. Services
-        cursor.execute("SELECT SUM(service_charge) as total FROM service_requests WHERE booking_id = %s", (booking_id,))
-        res_services = cursor.fetchone()
-        service_total = float(res_services['total'] or 0)
-
-        # 2. Damages (from Checkout module, if any exists yet)
-        # Note: If checkout hasn't happened, this might be 0, which is fine.
-        # We check if the 'checkouts' table exists first to avoid errors if you skipped that step temporarily.
-        damage_total = 0.0
-        cursor.execute("SHOW TABLES LIKE 'checkouts'")
-        if cursor.fetchone():
-            cursor.execute("SELECT SUM(damage_charge) as total FROM checkouts WHERE booking_id = %s", (booking_id,))
-            res_damages = cursor.fetchone()
-            damage_total = float(res_damages['total'] or 0)
-
-        additional_charges = service_total + damage_total
-
-        # C. Calculate Total Paid So Far (Sum of Module 6 payments + any updates)
-        cursor.execute("SELECT SUM(amount) as total FROM payments WHERE booking_id = %s", (booking_id,))
-        res_payments = cursor.fetchone()
-        total_paid_so_far = float(res_payments['total'] or 0)
-
-        # D. Response Data
-        response = {
-            "booking_id": booking['id'],
-            "guest_name": f"{booking['first_name']} {booking['last_name']}",
-            "reference": booking['booking_reference'],
-            "original_bill": float(booking['total_price']),
-            "additional_charges": additional_charges,
-            "total_amount": float(booking['total_price']) + additional_charges,
-            "total_paid": total_paid_so_far
-        }
-        
-        return jsonify(response)
-
+        cursor.execute("""
+            SELECT
+                p.id,
+                b.booking_reference                             AS booking_id,
+                CONCAT(b.first_name, ' ', b.last_name)         AS guest_name,
+                r.room_number                                   AS room_id,
+                b.total_price                                   AS total_amount,
+                p.amount_paid,
+                p.balance,
+                p.status
+            FROM payments p
+            JOIN bookings b ON p.booking_id = b.id
+            JOIN rooms r    ON b.room_id = r.id
+            ORDER BY p.id DESC
+        """)
+        payments = cursor.fetchall()
+        return jsonify(payments), 200
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"message": str(e)}), 500
     finally:
+        cursor.close()
         conn.close()
 
-# 2. SUBMIT UPDATE (Add New Payment)
-@app.route('/api/payments/update', methods=['POST'])
+@app.route('/api/payments/update', methods=['PUT'])
 def update_payment():
-    data = request.json
+    """
+    Called when staff clicks 'Save Update' in Module 11.
+    Updates amount_paid, balance, and status for a payment record.
+
+    Expected request body:
+    {
+      "id": 1,
+      "amount_paid": 5000.00,
+      "balance": 1180.00,
+      "status": "Partially Paid"
+    }
+    """
+    data = request.get_json()
+    payment_id  = data.get('id')
+    amount_paid = data.get('amount_paid')
+    balance     = data.get('balance')
+    status      = data.get('status')
+
+    if payment_id is None or amount_paid is None:
+        return jsonify({"message": "Missing required fields"}), 400
+
     conn = get_db_connection()
     cursor = conn.cursor()
-
     try:
-        # We insert a NEW row into 'payments'. 
-        # This keeps a history (e.g., Row 1: Deposit 500, Row 2: Final Payment 1000)
-        # This is safer than editing the old row because you lose the record of the deposit.
-        sql = """
-            INSERT INTO payments (booking_id, amount, payment_method, payment_date, remarks)
-            VALUES (%s, %s, %s, NOW(), %s)
-        """
-        cursor.execute(sql, (
-            data['booking_id'],
-            data['amount_to_pay'],
-            data['payment_method'],
-            data['remarks']
-        ))
+        cursor.execute("""
+            UPDATE payments
+            SET amount_paid = %s,
+                balance     = %s,
+                status      = %s
+            WHERE id = %s
+        """, (amount_paid, balance, status, payment_id))
         conn.commit()
-        return jsonify({"message": "Payment Updated Successfully"}), 200
+
+        if cursor.rowcount == 0:
+            return jsonify({"message": "Payment record not found"}), 404
+
+        return jsonify({"message": "Payment updated successfully"}), 200
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        conn.rollback()
+        return jsonify({"message": str(e)}), 500
     finally:
+        cursor.close()
         conn.close()
 
-# --- MODULE 11: INVENTORY REPORT ---
+# ===========================================================
+# MODULE 13 — Income Report Dashboard
+# ===========================================================
 
-@app.route('/api/inventory/report', methods=['GET'])
-def get_inventory_report():
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    
-    inventory_data = {
-        "amenities": [],
-        "supplies": []
+@app.route('/api/reports/income', methods=['GET'])
+def get_income_report():
+    """
+    Called by Module 13 on load and on every 'Filter Report' click.
+    Accepts optional query params: start_date, end_date, filter_by
+
+    Example: /api/reports/income?start_date=2026-01-01&end_date=2026-03-31&filter_by=Monthly
+
+    Expected response shape:
+    {
+      "total_revenue": 45000.00,
+      "occupancy_rate": 72.5,
+      "adr": 2250.00,
+      "revpar": 1631.25,
+      "room_charges": 40000.00,
+      "services_income": 5000.00,
+      "refunds": 500.00,
+      "damages_collected": 200.00,
+      "income_by_room_type": [
+          {"room_type": "Standard", "total": 15000},
+          {"room_type": "Deluxe",   "total": 25000},
+          {"room_type": "Suite",    "total": 5000}
+      ],
+      "income_by_payment_method": [
+          {"payment_method": "Cash",     "total": 20000},
+          {"payment_method": "GCash",    "total": 15000},
+          {"payment_method": "Bank Transfer", "total": 10000}
+      ]
     }
+    """
+    start_date = request.args.get('start_date')  # e.g. "2026-01-01"
+    end_date   = request.args.get('end_date')    # e.g. "2026-03-31"
+    # filter_by is used for future grouping logic (Daily/Weekly/Monthly)
+    # filter_by = request.args.get('filter_by', 'Monthly')
 
-    try:
-        # 1. Try to fetch Amenities (Module 2 data)
-        # Adjust table name if yours is different (e.g., 'room_amenities')
-        cursor.execute("SELECT * FROM amenities") 
-        inventory_data["amenities"] = cursor.fetchall()
-    except Exception:
-        # Fallback if table doesn't exist
-        inventory_data["amenities"] = [
-            {"name": "Bath Towel", "quantity": 150, "status": "OK"},
-            {"name": "Face Towel", "quantity": 80, "status": "Restock"},
-            {"name": "Soap Bar", "quantity": 200, "status": "OK"}
-        ]
-
-    try:
-        # 2. Try to fetch Supplies/Assets (Module 4 data)
-        cursor.execute("SELECT * FROM supplies") 
-        inventory_data["supplies"] = cursor.fetchall()
-    except Exception:
-        # Fallback if table doesn't exist
-        inventory_data["supplies"] = [
-            {"name": "Toilet Paper (Rolls)", "quantity": 40, "status": "Critical"},
-            {"name": "Shampoo (Bottles)", "quantity": 55, "status": "OK"},
-            {"name": "Cleaning Kit", "quantity": 10, "status": "OK"}
-        ]
-
-    conn.close()
-    return jsonify(inventory_data)
-
-# --- MODULE 12: INCOME REPORT (NO SERVICE CHARGES) ---
-@app.route('/api/reports/dashboard', methods=['GET'])
-def get_income_dashboard():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-
     try:
-        # --- HELPER: Safely get sum from a table ---
-        def get_safe_sum(table_name, column_name, where_clause=""):
-            cursor.execute(f"SHOW TABLES LIKE '{table_name}'")
-            if not cursor.fetchone():
-                return 0.0
-            
-            # Check if column exists before summing (Extra safety)
-            cursor.execute(f"SHOW COLUMNS FROM {table_name} LIKE '{column_name}'")
-            if not cursor.fetchone():
-                return 0.0
+        # Build optional date filter clause
+        date_filter = ""
+        params = []
+        if start_date and end_date:
+            date_filter = "WHERE p.created_at BETWEEN %s AND %s"
+            params = [start_date, end_date + ' 23:59:59']
+        elif start_date:
+            date_filter = "WHERE p.created_at >= %s"
+            params = [start_date]
+        elif end_date:
+            date_filter = "WHERE p.created_at <= %s"
+            params = [end_date + ' 23:59:59']
 
-            sql = f"SELECT SUM({column_name}) as total FROM {table_name} {where_clause}"
-            cursor.execute(sql)
-            result = cursor.fetchone()
-            return float(result['total']) if result and result['total'] else 0.0
+        # --- 1. TOTAL REVENUE (sum of all amount_paid in range) ---
+        cursor.execute(f"""
+            SELECT COALESCE(SUM(p.amount_paid), 0) AS total_revenue
+            FROM payments p {date_filter}
+        """, params)
+        total_revenue = float(cursor.fetchone()['total_revenue'])
 
-        # --- 1. CALCULATE REVENUE ---
-        room_revenue = get_safe_sum('bookings', 'total_price', "WHERE status != 'Cancelled'")
-        
-        # FIXED: We are not tracking service charges, so this is always 0
-        service_revenue = 0.0 
-        
-        damage_revenue = get_safe_sum('checkouts', 'damage_charge')
+        # --- 2. ROOM CHARGES (payments linked to room bookings only) ---
+        # Adjust category filter to match your data. If you don't have categories,
+        # just use total_revenue for room_charges.
+        cursor.execute(f"""
+            SELECT COALESCE(SUM(p.amount_paid), 0) AS room_charges
+            FROM payments p
+            JOIN bookings b ON p.booking_id = b.id
+            {date_filter}
+        """, params)
+        room_charges = float(cursor.fetchone()['room_charges'])
 
-        total_revenue = room_revenue + service_revenue + damage_revenue
+        # --- 3. SERVICES INCOME ---
+        # If you have a separate guest_requests/services table, query it here.
+        # For now, defaults to 0. Replace with real query when Module 9 is ready.
+        services_income = 0.00
 
-        # --- 2. OCCUPANCY RATE ---
-        cursor.execute("SELECT COUNT(*) as total FROM rooms")
-        res_rooms = cursor.fetchone()
-        total_rooms = res_rooms['total'] if res_rooms else 0
+        # --- 4. REFUNDS (negative payments or a refunds column) ---
+        # If you track refunds as negative amount_paid or a separate table, query here.
+        refunds = 0.00
 
-        occupied_rooms = 0
-        if total_rooms > 0:
-            cursor.execute("SELECT COUNT(*) as occupied FROM bookings WHERE status IN ('Checked-in', 'Confirmed')")
-            res_occ = cursor.fetchone()
-            occupied_rooms = res_occ['occupied'] if res_occ else 0
-        
-        occupancy_rate = round((occupied_rooms / total_rooms * 100), 1) if total_rooms > 0 else 0
+        # --- 5. DAMAGES COLLECTED ---
+        damages_collected = 0.00
 
-        # --- 3. ADR (Average Daily Rate) ---
-        cursor.execute("SELECT AVG(total_price) as adr FROM bookings WHERE status != 'Cancelled'")
-        res_adr = cursor.fetchone()
-        adr = round(float(res_adr['adr']), 2) if res_adr and res_adr['adr'] else 0.0
+        # --- 6. OCCUPANCY RATE ---
+        # occupied rooms / total rooms * 100
+        cursor.execute("SELECT COUNT(*) AS total FROM rooms")
+        total_rooms = cursor.fetchone()['total'] or 1
 
-        # --- 4. CHARTS DATA ---
-        
-        # Room Type Chart
         cursor.execute("""
-            SELECT r.room_type as name, SUM(b.total_price) as value
-            FROM bookings b
-            JOIN rooms r ON b.room_id = r.id
-            WHERE b.status != 'Cancelled'
-            GROUP BY r.room_type
+            SELECT COUNT(DISTINCT room_id) AS occupied
+            FROM bookings
+            WHERE status IN ('checked_in', 'Checked In')
         """)
-        room_type_data = cursor.fetchall()
+        occupied_rooms = cursor.fetchone()['occupied']
+        occupancy_rate = (occupied_rooms / total_rooms) * 100
 
-        # Payment Method Chart
-        payment_method_data = []
-        cursor.execute("SHOW TABLES LIKE 'payments'")
-        if cursor.fetchone():
-            cursor.execute("""
-                SELECT payment_method as name, SUM(amount) as value
-                FROM payments
-                GROUP BY payment_method
-            """)
-            payment_method_data = cursor.fetchall()
+        # --- 7. ADR (Average Daily Rate) = total revenue / number of bookings ---
+        cursor.execute(f"""
+            SELECT COUNT(DISTINCT p.booking_id) AS booking_count
+            FROM payments p {date_filter}
+        """, params)
+        booking_count = cursor.fetchone()['booking_count'] or 1
+        adr = total_revenue / booking_count
 
-        # --- 5. SEND RESPONSE ---
+        # --- 8. RevPAR = ADR * occupancy_rate / 100 ---
+        revpar = adr * (occupancy_rate / 100)
+
+        # --- 9. INCOME BY ROOM TYPE ---
+        cursor.execute(f"""
+            SELECT
+                r.room_type,
+                COALESCE(SUM(p.amount_paid), 0) AS total
+            FROM payments p
+            JOIN bookings b ON p.booking_id = b.id
+            JOIN rooms r ON b.room_id = r.id
+            {date_filter}
+            GROUP BY r.room_type
+            ORDER BY total DESC
+        """, params)
+        income_by_room_type = cursor.fetchall()
+
+        # --- 10. INCOME BY PAYMENT METHOD ---
+        cursor.execute(f"""
+            SELECT
+                p.payment_method,
+                COALESCE(SUM(p.amount_paid), 0) AS total
+            FROM payments p {date_filter}
+            GROUP BY p.payment_method
+            ORDER BY total DESC
+        """, params)
+        income_by_payment_method = cursor.fetchall()
+
         return jsonify({
-            "metrics": {
-                "total_revenue": total_revenue,
-                "occupancy_rate": occupancy_rate,
-                "adr": adr,
-                "revpar": round(total_revenue / total_rooms, 2) if total_rooms else 0
-            },
-            "charts": {
-                "room_type": room_type_data,
-                "payment_method": payment_method_data
-            },
-            "summary": {
-                "room_charges": room_revenue,
-                "services": service_revenue, # This will now safely send 0
-                "damages": damage_revenue,
-                "gross": total_revenue
-            }
-        })
+            "total_revenue":             total_revenue,
+            "occupancy_rate":            round(occupancy_rate, 2),
+            "adr":                       round(adr, 2),
+            "revpar":                    round(revpar, 2),
+            "room_charges":              room_charges,
+            "services_income":           services_income,
+            "refunds":                   refunds,
+            "damages_collected":         damages_collected,
+            "income_by_room_type":       income_by_room_type,
+            "income_by_payment_method":  income_by_payment_method,
+        }), 200
 
     except Exception as e:
-        print(f"❌ DASHBOARD ERROR: {e}") 
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"message": str(e)}), 500
     finally:
+        cursor.close()
         conn.close()
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=False, port=5000)

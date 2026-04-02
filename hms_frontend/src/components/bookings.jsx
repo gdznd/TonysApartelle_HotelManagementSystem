@@ -244,7 +244,8 @@ export default function Booking() {
                     <span style={{fontSize:'12px', color:'#666'}}>{b.contact_number}</span>
                   </td>
                   <td style={tdStyle}>{b.room_number} <br/><small>({b.room_type})</small></td>
-                  <td style={tdStyle}>{b.check_in} to {b.check_out}</td>
+                  {/* <td style={tdStyle}>{b.check_in} to {b.check_out}</td> */}
+                  <td style={tdStyle}>{b.check_in?.split('T')[0]} to {b.check_out?.split('T')[0]}</td>
                   <td style={tdStyle}>
                     <span style={{
                       padding:'4px 8px', borderRadius:'4px', color:'white', fontSize:'12px',
@@ -253,7 +254,7 @@ export default function Booking() {
                       {b.status}
                     </span>
                   </td>
-                  <td style={tdStyle}>${b.total_price}</td>
+                  <td style={tdStyle}>₱{b.total_price}</td>
                   
                   <td style={tdStyle}>
                     <button 
