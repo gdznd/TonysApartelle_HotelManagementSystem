@@ -76,6 +76,33 @@ Your browser should automatically open to `http://localhost:3000` (or 5173 for V
 
 ---
 
+
+## 🌿 Step 5: Pushing Your Code (Use Branches!)
+To keep our main code safe from accidental bugs, do not push directly your finished parts to main. Instead, we use branches! Think of a branch as your own personal sandbox.
+
+1. Create your sandbox
+Before you start coding, create and switch to a new branch:
+
+Bash
+git checkout -b your-branch-name
+(Example: git checkout -b frontend-payment-fix)
+
+2. Save your work
+When you are done coding, save it to your branch just like normal:
+
+Bash
+git add .
+git commit -m "Describe what you updated here"
+3. Push your branch to GitHub
+Instead of pushing to main, push to the branch name you created:
+
+Bash
+git push origin your-branch-name
+4. Merge it!
+Go to the project page on GitHub.com. You will see a green "Compare & pull request" button. Click it, create the pull request, and merge it into main safely!
+
 ## 📝 Troubleshooting
 * **"Connection Timeout" / Errno 10060:** This usually means your current Wi-Fi network (like school Wi-Fi) is blocking Port 4000. Try connecting your laptop to your phone's mobile hotspot.
 * **Missing Data:** Ensure your backend terminal is running and check that you actually placed `ca.pem` and `.env` in the correct folder.
+
+
