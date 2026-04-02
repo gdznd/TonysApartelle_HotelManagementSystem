@@ -18,7 +18,11 @@ Place **both** of these files directly into the root folder of the project (the 
 Open your terminal or command prompt and run:
 
 git clone https://github.com/gdznd/TonysApartelle_HotelManagementSystem
+<<<<<<< Updated upstream
 cd TonysApartelle_HotelManagementSystem
+=======
+cd SIA_HOTELMANAGEMENTSYSTEM
+>>>>>>> Stashed changes
 
 
 ---
