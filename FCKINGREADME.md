@@ -18,12 +18,26 @@ Place **both** of these files directly into the root folder of the project (the 
 Open your terminal or command prompt and run:
 
 git clone https://github.com/gdznd/TonysApartelle_HotelManagementSystem
+<<<<<<< Updated upstream
 cd TonysApartelle_HotelManagementSystem
+=======
+cd SIA_HOTELMANAGEMENTSYSTEM
+>>>>>>> Stashed changes
 
 
 ---
 
-## 🐍 Step 2: Start the Backend (Flask)
+### Step 2🛠️ Backend Setup Instructions
+
+Before you can run the Python backend, you need to install all the necessary tools and dependencies. 
+
+1. Open your terminal and navigate to the backend folder.
+2. (Optional but recommended) Activate your Python virtual environment.
+3. Run the following command to download all required packages:
+   ```bash
+   pip install -r requirements.txt
+
+## 🐍 Step 3: Start the Backend (Flask)
 The backend handles our API and talks to the TiDB database.
 
 1. Open a terminal in the main `SIA_HOTELMANAGEMENTSYSTEM` folder.
@@ -41,7 +55,7 @@ The backend handles our API and talks to the TiDB database.
 
 ---
 
-## ⚛️ Step 3: Start the Frontend (React)
+## ⚛️ Step 4: Start the Frontend (React)
 The frontend is the UI we interact with.
 
 1. Open a **second, separate terminal** and navigate to the frontend folder:
