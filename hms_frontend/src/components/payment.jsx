@@ -164,7 +164,7 @@ export default function Payment() {
 
     return (
         <div style={{ padding: '20px', fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif", backgroundColor: '#f4f7f6', minHeight: '100vh' }}>
-            <h2 style={{ color: '#333', marginBottom: '20px' }}>Module 7: Payment & Receipt</h2>
+            <h2 style={{ color: '#333', marginBottom: '20px' }}>Module 6: Payment & Receipt</h2>
 
             {/* SECTION 1: FIND BOOKING */}
             <div style={cardStyle}>
