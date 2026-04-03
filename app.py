@@ -446,11 +446,14 @@ def update_booking(id):
 # MODULE 6 — Payment & Receipt
 # ===========================================================
 
-@app.route('/api/bookings/ref/<booking_id>', methods=['GET'])
-def get_booking(booking_id):
+@app.route('/api/bookings/ref/<search_term>', methods=['GET'])
+def get_booking(search_term):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     try:
+        # Wrap the search term in wildcards for flexible matching
+        like_term = f"%{search_term}%"
+
         cursor.execute("""
             SELECT
                 b.id,
@@ -463,14 +466,22 @@ def get_booking(booking_id):
             FROM bookings b
             LEFT JOIN rooms r ON b.room_id = r.id
             LEFT JOIN payments p ON p.booking_id = b.id
-            WHERE b.booking_reference = %s
-            GROUP BY b.id, b.first_name, b.last_name,
+            WHERE b.booking_reference LIKE %s
+               OR b.first_name LIKE %s
+               OR b.last_name LIKE %s
+               OR CONCAT(b.first_name, ' ', b.last_name) LIKE %s
+               OR b.check_in LIKE %s
+            GROUP BY b.id, b.booking_reference, b.first_name, b.last_name,
                      r.room_type, r.room_number, b.total_price
-        """, (booking_id,))
-        booking = cursor.fetchone()
-        if not booking:
-            return jsonify({"message": "Booking not found"}), 404
-        return jsonify(booking), 200
+            ORDER BY b.id DESC
+        """, (like_term, like_term, like_term, like_term, like_term))
+        
+        bookings = cursor.fetchall()
+        
+        if not bookings:
+            return jsonify([]), 200 # Return empty array if no match
+            
+        return jsonify(bookings), 200
     except Exception as e:
         return jsonify({"message": str(e)}), 500
     finally:
