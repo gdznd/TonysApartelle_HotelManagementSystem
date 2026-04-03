@@ -420,7 +420,7 @@ def delete_booking(id):
 #         pass
 
 # ===========================================================
-# MODULE 7 — Payment & Receipt
+# MODULE 6 — Payment & Receipt
 # ===========================================================
 
 @app.route('/api/bookings/ref/<booking_id>', methods=['GET'])
