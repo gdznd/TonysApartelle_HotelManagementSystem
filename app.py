@@ -299,23 +299,46 @@ def create_booking():
     return jsonify({"message": "Booking created successfully!"})
 
 # --- DELETE BOOKING ROUTE ---
+# --- DELETE BOOKING ROUTE ---
 @app.route('/api/bookings/<int:id>', methods=['DELETE'])
 def delete_booking(id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # 1. First, delete any payments associated with this booking
-        # (Otherwise, the database will block you from deleting the booking)
         cursor.execute("DELETE FROM payments WHERE booking_id = %s", (id,))
-        
-        # 2. Then, delete the booking itself
         cursor.execute("DELETE FROM bookings WHERE id = %s", (id,))
-        
         conn.commit()
         conn.close()
         return jsonify({"message": "Booking deleted successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
+# --- UPDATE BOOKING ROUTE --- ← NEW
+@app.route('/api/bookings/<int:id>', methods=['PUT'])
+def update_booking(id):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        data = request.json
+        sql = """
+            UPDATE bookings SET
+                first_name=%s, last_name=%s, contact_number=%s, email=%s,
+                address=%s, gender=%s, room_id=%s, check_in=%s, check_out=%s,
+                adults=%s, children=%s, total_price=%s, booking_type=%s,
+                status=%s, special_requests=%s
+            WHERE id=%s
+        """
+        cursor.execute(sql, (
+            data['first_name'], data['last_name'], data['contact_number'],
+            data['email'], data['address'], data['gender'],
+            data['room_id'], data['check_in'], data['check_out'],
+            data['adults'], data['children'], data['total_price'],
+            data['booking_type'], data['status'], data['special_requests'],
+            id
+        ))
+        conn.commit()
+        conn.close()
+        return jsonify({"message": "Booking updated successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -756,18 +779,23 @@ def get_all_payments():
     try:
         cursor.execute("""
             SELECT
-                p.id,
-                b.booking_reference                             AS booking_id,
-                CONCAT(b.first_name, ' ', b.last_name)         AS guest_name,
-                r.room_number                                   AS room_id,
-                b.total_price                                   AS total_amount,
-                p.amount_paid,
-                p.balance,
-                p.status
-            FROM payments p
-            JOIN bookings b ON p.booking_id = b.id
-            JOIN rooms r    ON b.room_id = r.id
-            ORDER BY p.id DESC
+                MAX(p.id)                                           AS id,
+                b.booking_reference                                 AS booking_id,
+                CONCAT(b.first_name, ' ', b.last_name)             AS guest_name,
+                r.room_number                                       AS room_id,
+                b.total_price                                       AS total_amount,
+                COALESCE(SUM(p.amount_paid), 0)                    AS amount_paid,
+                b.total_price - COALESCE(SUM(p.amount_paid), 0)    AS balance,
+                CASE
+                    WHEN b.total_price - COALESCE(SUM(p.amount_paid), 0) <= 0 THEN 'Fully Paid'
+                    WHEN COALESCE(SUM(p.amount_paid), 0) > 0 THEN 'Partially Paid'
+                    ELSE 'Unpaid'
+                END                                                 AS status
+            FROM bookings b
+            LEFT JOIN payments p ON p.booking_id = b.id
+            JOIN rooms r ON b.room_id = r.id
+            GROUP BY b.id, b.booking_reference, b.first_name, b.last_name, r.room_number, b.total_price
+            ORDER BY MAX(p.id) DESC
         """)
         payments = cursor.fetchall()
         return jsonify(payments), 200
