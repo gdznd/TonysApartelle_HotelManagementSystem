@@ -207,6 +207,10 @@ export default function Payment() {
                             onKeyDown={handleSearchKeyDown}
                             style={inputStyle}
                         />
+                        {/* NEW: CASE SENSITIVITY WARNING */}
+                        <p style={{ fontSize: '12px', color: '#dc3545', marginTop: '5px', marginBottom: '0' }}>
+                            * Note: Name searches are case-sensitive (e.g. type <strong>Kia</strong>, not kia).
+                        </p>
                     </div>
                     <button onClick={handleSearch} style={btnBlue} disabled={isSearching}>
                         {isSearching ? 'Searching...' : 'Find Booking'}
