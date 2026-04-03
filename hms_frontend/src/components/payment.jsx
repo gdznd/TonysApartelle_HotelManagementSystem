@@ -80,6 +80,11 @@ export default function Payment() {
             alert(`Amount cannot exceed remaining balance of ₱${bookingData.remainingBalance.toLocaleString()}.`);
             return;
         }
+        
+        if (paymentMethod === 'Cash' && (!cashReceived || parseFloat(cashReceived) <= 0)) {
+            alert("Please enter the Cash Received amount.");
+            return;
+        }
         if (paymentMethod === 'Cash' && parseFloat(cashReceived) < parseFloat(amountToPay)) {
             alert("Cash received cannot be less than the amount to pay.");
             return;
@@ -142,7 +147,7 @@ export default function Payment() {
         doc.text(`Receipt #: ${receiptNumber}`, 14, 50);
         doc.text(`Date: ${new Date().toLocaleString()}`, 14, 58);
         doc.text(`Guest: ${bookingData.guestName}`, 14, 66);
-        doc.text(`Booking Ref: ${bookingData.id}`, 14, 74);
+        doc.text(`Booking Ref: ${bookingData.booking_reference}`, 14, 74);
         doc.text(`Room: ${bookingData.roomType}`, 14, 82);
 
         autoTable(doc, {
@@ -249,6 +254,7 @@ export default function Payment() {
                                     style={inputStyle}
                                     min="0"
                                     max={bookingData.remainingBalance}
+                                    autoComplete="off"
                                 />
                             </div>
                             <div style={groupStyle}>
@@ -260,6 +266,7 @@ export default function Payment() {
                                     onChange={(e) => setCashReceived(e.target.value)}
                                     style={inputStyle}
                                     disabled={paymentMethod !== 'Cash'}
+                                    autoComplete="off"
                                 />
                             </div>
                             <div style={groupStyle}>
