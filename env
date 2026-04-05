@@ -1,5 +1,0 @@
-DB_HOST=gateway01.ap-southeast-1.prod.aws.tidbcloud.com
-DB_PORT=4000
-DB_USER=25fqAgQrry9tuG7.root
-DB_PASSWORD=YoYJoS0fzUeV8O0jna
-DB_NAME=hoteldb
