@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -6,6 +6,7 @@ const BASE_URL = 'http://127.0.0.1:5000';
 
 export default function Payment() {
     const [searchId, setSearchId] = useState('');
+    const [suggestions, setSuggestions] = useState([]); // NEW: stores live search results
     const [bookingData, setBookingData] = useState(null);
     const [paymentMethod, setPaymentMethod] = useState('Cash');
     const [amountToPay, setAmountToPay] = useState('');
@@ -13,7 +14,7 @@ export default function Payment() {
     const [receiptNumber, setReceiptNumber] = useState('');
     const [isSearching, setIsSearching] = useState(false);
     const [isLogging, setIsLogging] = useState(false);
-    const [paymentLogged, setPaymentLogged] = useState(false); // NEW: tracks if payment was just logged
+    const [paymentLogged, setPaymentLogged] = useState(false);
 
     // --- HELPER: GENERATE RECEIPT ID (MMDDYYYYHHMMSS) ---
     const generateReceiptID = () => {
@@ -22,47 +23,71 @@ export default function Payment() {
         return `${pad(now.getMonth()+1)}${pad(now.getDate())}${now.getFullYear()}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     };
 
-    // --- SEARCH: FETCH REAL BOOKING FROM BACKEND ---
-    const handleSearch = async () => {
-        if (!searchId.trim()) {
-            alert("Please enter a Booking ID.");
-            return;
-        }
-        setIsSearching(true);
-        setBookingData(null);
-        setPaymentLogged(false);
-        try {
-            const response = await fetch(`${BASE_URL}/api/bookings/ref/${searchId.trim()}`);
-            if (!response.ok) {
-                alert(`Booking "${searchId}" not found.`);
-                return;
+    // --- LIVE SEARCH (AS YOU TYPE) ---
+    useEffect(() => {
+        // Only run live search if user typed at least 2 characters and no booking is selected yet
+        const delayDebounceFn = setTimeout(async () => {
+            if (searchId.trim().length >= 2 && !bookingData) {
+                setIsSearching(true);
+                try {
+                    const response = await fetch(`${BASE_URL}/api/bookings/ref/${searchId.trim()}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        setSuggestions(data); // Populate the "Do you mean:" list
+                    } else {
+                        setSuggestions([]);
+                    }
+                } catch (error) {
+                    setSuggestions([]);
+                } finally {
+                    setIsSearching(false);
+                }
+            } else {
+                setSuggestions([]);
             }
-            const result = await response.json();
-            // Expected backend shape:
-            // { id, guest_name, room_type, total_amount, amount_paid, balance }
-            setBookingData({
-                id: result.id,
-                booking_reference: result.booking_reference,
-                guestName: result.guest_name,
-                roomType: result.room_type,
-                totalAmount: parseFloat(result.total_amount),
-                amountPaid: parseFloat(result.amount_paid),
-                remainingBalance: parseFloat(result.balance),
-            });
-            setReceiptNumber(generateReceiptID());
-            setAmountToPay('');
-            setCashReceived('');
-        } catch (error) {
-            console.error("Search error:", error);
-            alert("Could not connect to server.");
-        } finally {
-            setIsSearching(false);
+        }, 300); // 300ms delay prevents spamming the server while typing
+
+        return () => clearTimeout(delayDebounceFn);
+    }, [searchId, bookingData]);
+
+    // Handle typing in the search box
+    const handleSearchChange = (e) => {
+        setSearchId(e.target.value);
+        if (bookingData) {
+            setBookingData(null); // Clear active bill if user starts a new search
         }
     };
 
-    // Allow pressing Enter in search box
+    // Fallback for the manual "Find Booking" button
+    const handleSearch = () => {
+        if (suggestions.length === 1) {
+            handleSelectBooking(suggestions[0]);
+        } else if (suggestions.length === 0) {
+            alert("No matching bookings found.");
+        }
+    };
+
     const handleSearchKeyDown = (e) => {
         if (e.key === 'Enter') handleSearch();
+    };
+
+    // --- LOAD SELECTED BOOKING INTO BILL SUMMARY ---
+    const handleSelectBooking = (selected) => {
+        setBookingData({
+            id: selected.id,
+            booking_reference: selected.booking_reference,
+            guestName: selected.guest_name,
+            roomType: selected.room_type,
+            totalAmount: parseFloat(selected.total_amount),
+            amountPaid: parseFloat(selected.amount_paid),
+            remainingBalance: parseFloat(selected.balance),
+        });
+        setReceiptNumber(generateReceiptID());
+        setAmountToPay('');
+        setCashReceived('');
+        setPaymentLogged(false);
+        setSuggestions([]); // Hide suggestions box
+        setSearchId(selected.booking_reference); // Put exact ID in the text box neatly
     };
 
     // --- CALCULATE CHANGE ---
@@ -78,6 +103,10 @@ export default function Payment() {
         }
         if (parseFloat(amountToPay) > bookingData.remainingBalance) {
             alert(`Amount cannot exceed remaining balance of ₱${bookingData.remainingBalance.toLocaleString()}.`);
+            return;
+        }
+        if (paymentMethod === 'Cash' && (!cashReceived || parseFloat(cashReceived) <= 0)) {
+            alert("Please enter the Cash Received amount.");
             return;
         }
         if (paymentMethod === 'Cash' && parseFloat(cashReceived) < parseFloat(amountToPay)) {
@@ -133,16 +162,14 @@ export default function Payment() {
         }
 
         const doc = new jsPDF();
-
         doc.setFontSize(20);
         doc.text("OFFICIAL RECEIPT", 105, 20, null, null, "center");
         doc.setFontSize(12);
         doc.text("Hotel Management System", 105, 30, null, null, "center");
-
         doc.text(`Receipt #: ${receiptNumber}`, 14, 50);
         doc.text(`Date: ${new Date().toLocaleString()}`, 14, 58);
         doc.text(`Guest: ${bookingData.guestName}`, 14, 66);
-        doc.text(`Booking Ref: ${bookingData.id}`, 14, 74);
+        doc.text(`Booking Ref: ${bookingData.booking_reference}`, 14, 74);
         doc.text(`Room: ${bookingData.roomType}`, 14, 82);
 
         autoTable(doc, {
@@ -171,21 +198,54 @@ export default function Payment() {
                 <h4 style={{ color: '#007bff', marginBottom: '15px' }}>Find Booking to Pay</h4>
                 <div style={{ display: 'flex', gap: '15px', alignItems: 'flex-end' }}>
                     <div style={{ flex: 1 }}>
-                        <label style={labelStyle}>Booking Reference ID</label>
+                        <label style={labelStyle}>Search (Name, Date, or Partial ID)</label>
                         <input
                             type="text"
-                            placeholder="e.g., BK-12345"
+                            placeholder="e.g., Kiana, 2026-04-04, or 1234"
                             value={searchId}
-                            onChange={(e) => setSearchId(e.target.value)}
+                            onChange={handleSearchChange}
                             onKeyDown={handleSearchKeyDown}
                             style={inputStyle}
                         />
+                        {/* NEW: CASE SENSITIVITY WARNING */}
+                        <p style={{ fontSize: '12px', color: '#dc3545', marginTop: '5px', marginBottom: '0' }}>
+                            * Note: Name searches are case-sensitive (e.g. type <strong>Kia</strong>, not kia).
+                        </p>
                     </div>
                     <button onClick={handleSearch} style={btnBlue} disabled={isSearching}>
                         {isSearching ? 'Searching...' : 'Find Booking'}
                     </button>
                 </div>
             </div>
+
+            {/* NEW: "DO YOU MEAN" SUGGESTIONS LIST */}
+            {suggestions.length > 0 && !bookingData && (
+                <div style={{ ...cardStyle, marginTop: '15px' }}>
+                    <h5 style={{ color: '#555', marginBottom: '15px' }}>Do you mean:</h5>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {suggestions.map((s) => (
+                            <div 
+                                key={s.id} 
+                                onClick={() => handleSelectBooking(s)}
+                                style={{ 
+                                    padding: '12px 15px', 
+                                    backgroundColor: '#f8f9fa', 
+                                    border: '1px solid #ddd',
+                                    borderRadius: '6px', 
+                                    cursor: 'pointer', 
+                                    fontWeight: 'bold',
+                                    color: '#007bff',
+                                    transition: 'background 0.2s'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#e9ecef'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                            >
+                                {s.booking_reference} — {s.guest_name}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {bookingData && (
                 <div style={{ display: 'flex', gap: '20px', marginTop: '20px', flexWrap: 'wrap' }}>
@@ -249,6 +309,7 @@ export default function Payment() {
                                     style={inputStyle}
                                     min="0"
                                     max={bookingData.remainingBalance}
+                                    autoComplete="off"
                                 />
                             </div>
                             <div style={groupStyle}>
@@ -260,6 +321,7 @@ export default function Payment() {
                                     onChange={(e) => setCashReceived(e.target.value)}
                                     style={inputStyle}
                                     disabled={paymentMethod !== 'Cash'}
+                                    autoComplete="off"
                                 />
                             </div>
                             <div style={groupStyle}>
