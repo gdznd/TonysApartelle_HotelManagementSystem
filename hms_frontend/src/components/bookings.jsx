@@ -20,6 +20,7 @@ export default function Booking() {
 
   // Derived State for Price Calculation
   const [totalPrice, setTotalPrice] = useState(0);
+  const [isEditing, setIsEditing] = useState(false);
 
   // 1. Initial Load
   useEffect(() => {
@@ -97,25 +98,79 @@ export default function Booking() {
     }
   }, [formData.room_id, formData.check_in, formData.check_out, rooms]);
 
-  // 5. Submit Booking
+// 5. Submit Booking
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!formData.booking_reference) {
         alert("Please generate a Booking ID first!");
         return;
     }
-
     const payload = { ...formData, total_price: totalPrice };
-    
     axios.post('http://127.0.0.1:5000/api/bookings', payload)
       .then(() => {
         alert("Booking Confirmed!");
         fetchBookings();
         fetchRooms();
-        // Reset ID for next booking
-        setFormData(prev => ({ ...prev, booking_reference: '' })); 
+        resetForm();
       })
       .catch(err => console.error(err));
+  };
+
+  // NEW: Load booking into form for editing
+  const handleEdit = (booking) => {
+    setFormData({
+      booking_reference: booking.booking_reference || '',
+      first_name: booking.first_name,
+      last_name: booking.last_name,
+      contact_number: booking.contact_number,
+      email: booking.email || '',
+      address: booking.address || '',
+      gender: booking.gender || 'Prefer not to say',
+      room_id: booking.room_id,
+      check_in: booking.check_in?.split('T')[0] || booking.check_in || '',
+      check_out: booking.check_out?.split('T')[0] || booking.check_out || '',
+      adults: booking.adults,
+      children: booking.children,
+      booking_type: booking.booking_type || 'Walk-in',
+      status: booking.status,
+      special_requests: booking.special_requests || '',
+      id: booking.id
+    });
+    setIsEditing(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // NEW: Save edited booking
+  const handleUpdate = (e) => {
+    e.preventDefault();
+    const payload = { ...formData, total_price: totalPrice };
+    axios.put(`http://127.0.0.1:5000/api/bookings/${formData.id}`, payload)
+      .then(() => {
+        alert("Booking Updated!");
+        fetchBookings();
+        fetchRooms();
+        resetForm();
+      })
+      .catch(err => {
+        console.error(err);
+        alert("Error updating booking.");
+      });
+  };
+
+  // NEW: Reset form
+  const resetForm = () => {
+    setFormData({
+      booking_reference: '',
+      first_name: '', last_name: '', contact_number: '', email: '',
+      address: '', gender: 'Prefer not to say',
+      room_id: rooms.length > 0 ? rooms[0].id : '',
+      check_in: '', check_out: '',
+      adults: 1, children: 0,
+      booking_type: 'Walk-in',
+      status: 'Confirmed',
+      special_requests: ''
+    });
+    setIsEditing(false);
   };
 
   const handleDelete = (id) => {
@@ -140,9 +195,11 @@ export default function Booking() {
         
         {/* --- SECTION A: BOOKING FORM --- */}
         <div style={{ background: 'white', padding: '25px', borderRadius: '8px', boxShadow: '0 2px 5px rgba(0,0,0,0.1)' }}>
-          <h3 style={{ color: '#007bff', borderBottom: '2px solid #f0f0f0', paddingBottom: '10px' }}>Guest & Trip Details</h3>
+          <h3 style={{ color: isEditing ? '#fd7e14' : '#007bff', borderBottom: '2px solid #f0f0f0', paddingBottom: '10px' }}>
+            {isEditing ? `✏️ Editing — ${formData.booking_reference}` : 'Guest & Trip Details'}
+          </h3>
           
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={isEditing ? handleUpdate : handleSubmit}>
             <div style={gridStyle}>
               {/* Row 1 */}
               <div><label>First Name</label><input required name="first_name" value={formData.first_name} onChange={handleChange} style={inputStyle} /></div>
@@ -211,7 +268,16 @@ export default function Booking() {
               </span>
             </div>
 
-            <button type="submit" style={confirmBtnStyle}>Confirm Booking</button>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button type="submit" style={{ ...confirmBtnStyle, background: isEditing ? '#fd7e14' : '#28a745', flex: 1, marginTop: 0 }}>
+                {isEditing ? '💾 Save Changes' : 'Confirm Booking'}
+              </button>
+              {isEditing && (
+                <button type="button" onClick={resetForm} style={{ ...confirmBtnStyle, background: '#6c757d', flex: 'none', width: '150px', marginTop: 0 }}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </form>
         </div>
 
@@ -257,20 +323,20 @@ export default function Booking() {
                   <td style={tdStyle}>₱{b.total_price}</td>
                   
                   <td style={tdStyle}>
-                    <button 
-                        onClick={() => handleDelete(b.id)}
-                        style={{
-                            backgroundColor: '#dc3545',
-                            color: 'white',
-                            border: 'none',
-                            padding: '6px 10px',
-                            borderRadius: '4px',
-                            cursor: 'pointer',
-                            fontSize: '12px'
-                        }}
-                    >
-                        Delete
-                    </button>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                          onClick={() => handleEdit(b)}
+                          style={{ backgroundColor: '#007bff', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                          Edit
+                      </button>
+                      <button
+                          onClick={() => handleDelete(b.id)}
+                          style={{ backgroundColor: '#dc3545', color: 'white', border: 'none', padding: '6px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+                      >
+                          Delete
+                      </button>
+                    </div>
                   </td>
 
                 </tr>
