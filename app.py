@@ -595,152 +595,163 @@ def get_active_checkins():
     results = cursor.fetchall()
     conn.close()
     return jsonify(results)
-
-# --- MODULE 8: SERVICES & REQUESTS ---
-
-# 1. GET ACTIVE GUESTS (For the dropdown menu)
-# Reuse the existing /api/checkins/active or make a specific lightweight one
-@app.route('/api/services/guests', methods=['GET'])
-def get_service_guests():
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    # We only want guests who are currently checked in
-    sql = """
-        SELECT b.id as booking_id, b.first_name, b.last_name, r.room_number 
-        FROM bookings b
-        JOIN rooms r ON b.room_id = r.id
-        WHERE b.status = 'Checked-in'
-    """
-    cursor.execute(sql)
-    results = cursor.fetchall()
-    conn.close()
-    return jsonify(results)
-
-# 2. SUBMIT NEW REQUEST
-@app.route('/api/services/create', methods=['POST'])
-def create_service_request():
-    data = request.json
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        sql = """
-            INSERT INTO service_requests (booking_id, request_type, description, service_charge, staff_name, status)
-            VALUES (%s, %s, %s, %s, %s, 'Pending')
-        """
-        cursor.execute(sql, (
-            data['booking_id'],
-            data['request_type'],
-            data['description'],
-            data['service_charge'],
-            data['staff_name']
-        ))
-        conn.commit()
-        return jsonify({"message": "Request logged"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        conn.close()
-
-# 3. GET ALL OPEN REQUESTS (For the table below)
+    
+# GET ALL SERVICE REQUESTS (For the table)
 @app.route('/api/services/list', methods=['GET'])
 def get_service_requests():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     sql = """
-        SELECT s.*, b.first_name, b.last_name, r.room_number
+        SELECT 
+            s.id,
+            s.booking_id,
+            b.booking_reference,
+            CONCAT(b.first_name, ' ', b.last_name) AS guest_name,
+            r.room_number,
+            s.request_type,
+            s.description,
+            s.service_charge,
+            s.staff_name,
+            s.status,
+            s.created_at
         FROM service_requests s
         JOIN bookings b ON s.booking_id = b.id
         JOIN rooms r ON b.room_id = r.id
-        ORDER BY s.status DESC, s.created_at DESC
+        ORDER BY 
+            CASE WHEN s.status = 'Pending' THEN 0
+                 WHEN s.status = 'In Progress' THEN 1
+                 ELSE 2 END,
+            s.created_at DESC
     """
     cursor.execute(sql)
     results = cursor.fetchall()
     conn.close()
     return jsonify(results)
 
-# 4. MARK REQUEST AS COMPLETE
-@app.route('/api/services/complete/<int:id>', methods=['PUT'])
-def complete_request(id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE service_requests SET status = 'Completed' WHERE id = %s", (id,))
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Updated"}), 200
+# --- MODULE 9: SERVICES, REQUESTS & ROOM FLAGS ---
 
-# --- MODULE 9: CHECK-OUT LOGIC ---
-
-# 1. SEARCH: Find guests specifically for Check-out
-@app.route('/api/checkout/search', methods=['GET'])
-def search_checkout_guest():
-    query = request.args.get('q', '')
+# 1. GET ACTIVE GUESTS (Updated to include room_id and sorted by room)
+@app.route('/api/services/guests', methods=['GET'])
+def get_service_guests():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    
-    # Only search bookings with status 'Checked-in'
     sql = """
-        SELECT b.*, r.room_number, r.room_type 
+        SELECT
+            b.id          AS booking_id,
+            b.booking_reference,
+            b.first_name,
+            b.last_name,
+            r.id          AS room_id,    
+            r.room_number
         FROM bookings b
         JOIN rooms r ON b.room_id = r.id
         WHERE b.status = 'Checked-in'
-        AND (b.first_name LIKE %s OR r.room_number LIKE %s OR b.id LIKE %s)
+        ORDER BY r.room_number ASC
     """
-    search_term = f"%{query}%"
-    cursor.execute(sql, (search_term, search_term, search_term))
+    cursor.execute(sql)
     results = cursor.fetchall()
     conn.close()
     return jsonify(results)
 
-# 2. SUBMIT CHECK-OUT
-@app.route('/api/checkout/submit', methods=['POST'])
-def perform_checkout():
+# 2. SUBMIT NEW REQUEST (Includes balance calculation and payment entry)
+@app.route('/api/services/create', methods=['POST'])
+def create_service_request():
+    data = request.json
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # A. Insert the service request
+        cursor.execute("""
+            INSERT INTO service_requests 
+                (booking_id, request_type, description, service_charge, staff_name, status)
+            VALUES (%s, %s, %s, %s, %s, 'Pending')
+        """, (
+            data['booking_id'], data['request_type'],
+            data.get('description', ''), data.get('service_charge', 0),
+            data.get('staff_name', 'Unassigned')
+        ))
+        new_request_id = cursor.lastrowid
+
+        # B. If there's a charge, update the balance in the payments table
+        service_charge = float(data.get('service_charge', 0))
+        if service_charge > 0:
+            cursor.execute("""
+                SELECT b.total_price, COALESCE(SUM(p.amount_paid), 0) AS already_paid
+                FROM bookings b
+                LEFT JOIN payments p ON p.booking_id = b.id
+                WHERE b.id = %s GROUP BY b.id
+            """, (data['booking_id'],))
+            row = cursor.fetchone()
+
+            # Logic: New balance = (Total - Paid) + New Service Charge
+            current_balance = float(row['total_price']) - float(row['already_paid'])
+            new_total_owing = current_balance + service_charge 
+
+            receipt_number = f"SVC-{new_request_id}-{datetime.now().strftime('%y%m%d%H%M')}"
+
+            cursor.execute("""
+                INSERT INTO payments (booking_id, receipt_number, payment_method, amount_paid, balance, status)
+                VALUES (%s, %s, 'Service Charge', 0, %s, 'Unpaid')
+            """, (data['booking_id'], receipt_number, new_total_owing))
+
+        conn.commit()
+        return jsonify({"message": "Request logged", "id": new_request_id}), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+# 3. UPDATE REQUEST STATUS (Combined logic for 'In Progress' or 'Completed')
+@app.route('/api/services/update-status/<int:id>', methods=['PUT'])
+def update_service_status(id):
+    new_status = request.json.get('status') # Frontend should send 'In Progress' or 'Completed'
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE service_requests SET status = %s WHERE id = %s", (new_status, id))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": f"Marked as {new_status}"}), 200
+
+# 4. UPDATE ROOM FLAGS (DND / MUR)
+@app.route('/api/rooms/<int:room_id>/flags', methods=['PUT'])
+def update_room_flags(room_id):
     data = request.json
     conn = get_db_connection()
     cursor = conn.cursor()
-
     try:
-        # A. Log the Checkout
-        sql_insert = """
-            INSERT INTO checkouts 
-            (booking_id, checkout_time, amenities_ok, room_condition_ok, key_returned, 
-             damage_notes, damage_charge, final_room_condition, guest_feedback, 
-             total_bill, final_balance_paid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        cursor.execute(sql_insert, (
-            data['booking_id'],
-            data['checkout_time'],
-            data['amenities_ok'],
-            data['room_condition_ok'],
-            data['key_returned'],
-            data['damage_notes'],
-            data['damage_charge'],
-            data['final_room_condition'],
-            data['guest_feedback'],
-            data['total_bill'],
-            data['final_balance_paid']
-        ))
-
-        # B. Update Booking Status to 'Checked-out'
-        cursor.execute("UPDATE bookings SET status = 'Checked-out' WHERE id = %s", (data['booking_id'],))
-
-        # C. Update Room Status (e.g., set to 'Dirty' or 'Maintenance' based on inspection)
-        # Assuming the form sends the desired room status
-        new_room_status = 'Dirty' if data['final_room_condition'] == 'Needs Cleaning' else 'Available'
-        if data['final_room_condition'] == 'Maintenance':
-            new_room_status = 'Maintenance'
-            
-        # Get room_id from booking to update rooms table
-        cursor.execute("SELECT room_id FROM bookings WHERE id = %s", (data['booking_id'],))
-        room_id = cursor.fetchone()[0]
+        updates, values = [], []
+        if 'dnd' in data:
+            updates.append("dnd = %s")
+            values.append(bool(data['dnd']))
+        if 'mur' in data:
+            updates.append("mur = %s")
+            values.append(bool(data['mur']))
         
-        cursor.execute("UPDATE rooms SET status = %s WHERE id = %s", (new_room_status, room_id))
+        if not updates: return jsonify({"error": "No flags provided"}), 400
 
+        values.append(room_id)
+        cursor.execute(f"UPDATE rooms SET {', '.join(updates)} WHERE id = %s", values)
         conn.commit()
-        return jsonify({"message": "Check-out Complete"}), 200
-
+        return jsonify({"message": "Flags updated"}), 200
     except Exception as e:
-        print(f"Error: {e}")
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+# 5. Delete Service Request (Only if Completed)
+@app.route('/api/services/delete/<int:id>', methods=['DELETE'])
+def delete_service_request(id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM service_requests WHERE id = %s AND status = 'Completed'", (id,)
+        )
+        conn.commit()
+        return jsonify({"message": "Deleted"}), 200
+    except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
@@ -823,6 +834,189 @@ def update_payment():
     finally:
         cursor.close()
         conn.close()
+
+# ------------------------------------------------------------------
+# MODULE 12: INVENTORY REPORT  (backend PDF via fpdf)
+# ------------------------------------------------------------------
+ 
+@app.route('/api/inventory/report', methods=['GET'])
+def inventory_report_pdf():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        # --- 1. AMENITIES: total quantity assigned across all rooms ---
+        cursor.execute("""
+            SELECT
+                a.name                     AS item_name,
+                a.type                     AS category,
+                COALESCE(SUM(ra.quantity), 0) AS total_assigned,
+                CASE
+                    WHEN COALESCE(SUM(ra.quantity), 0) < 10 THEN 'Low Stock'
+                    WHEN COALESCE(SUM(ra.quantity), 0) < 30 THEN 'Moderate'
+                    ELSE 'OK'
+                END                        AS stock_status
+            FROM amenities a
+            LEFT JOIN room_amenities ra ON a.id = ra.amenity_id
+            GROUP BY a.id, a.name, a.type
+            ORDER BY a.type, a.name
+        """)
+        amenities = cursor.fetchall()
+ 
+        # --- 2. SUPPLIES: total quantity assigned across all rooms ---
+        cursor.execute("""
+            SELECT
+                s.name                     AS item_name,
+                s.status                   AS supply_status,
+                COALESCE(SUM(rs.quantity), 0) AS total_assigned
+            FROM supplies s
+            LEFT JOIN room_supplies rs ON s.id = rs.supply_id
+            GROUP BY s.id, s.name, s.status
+            ORDER BY s.name
+        """)
+        supplies = cursor.fetchall()
+ 
+        # --- 3. ROOM SUMMARY ---
+        cursor.execute("""
+            SELECT
+                room_type,
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'Available'  THEN 1 ELSE 0 END) AS available,
+                SUM(CASE WHEN status = 'Occupied'   THEN 1 ELSE 0 END) AS occupied,
+                SUM(CASE WHEN status = 'Reserved'   THEN 1 ELSE 0 END) AS reserved,
+                SUM(CASE WHEN status = 'Maintenance'THEN 1 ELSE 0 END) AS maintenance
+            FROM rooms
+            GROUP BY room_type
+        """)
+        room_summary = cursor.fetchall()
+ 
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+ 
+    # --- BUILD PDF ---
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+ 
+    # --- HEADER ---
+    pdf.set_font("Arial", 'B', 18)
+    pdf.set_text_color(0, 91, 170)
+    pdf.cell(0, 10, "TONY'S APARTELLE", ln=True, align='C')
+ 
+    pdf.set_font("Arial", '', 10)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 5, "WG6V+RX4, Butuan City-Malaybalay Rd, Butuan City 8600", ln=True, align='C')
+    pdf.cell(0, 5, "Phone: 0909 392 9516", ln=True, align='C')
+ 
+    pdf.ln(4)
+    pdf.set_draw_color(0, 91, 170)
+    pdf.set_line_width(0.8)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(4)
+ 
+    pdf.set_font("Arial", 'B', 14)
+    pdf.set_text_color(30, 30, 30)
+    pdf.cell(0, 8, "MONTHLY INVENTORY REPORT", ln=True, align='C')
+ 
+    pdf.set_font("Arial", '', 9)
+    pdf.set_text_color(130, 130, 130)
+    pdf.cell(0, 5, f"Generated: {datetime.now().strftime('%B %d, %Y  %I:%M %p')}", ln=True, align='C')
+    pdf.ln(6)
+ 
+    # --- SECTION 1: ROOM SUMMARY ---
+    def section_title(title, r, g, b):
+        pdf.set_font("Arial", 'B', 12)
+        pdf.set_fill_color(r, g, b)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(0, 8, f"  {title}", ln=True, fill=True)
+        pdf.set_text_color(30, 30, 30)
+        pdf.ln(2)
+ 
+    def table_header(cols, widths, r, g, b):
+        pdf.set_font("Arial", 'B', 9)
+        pdf.set_fill_color(r, g, b)
+        pdf.set_text_color(255, 255, 255)
+        for col, w in zip(cols, widths):
+            pdf.cell(w, 7, col, border=1, fill=True)
+        pdf.ln()
+        pdf.set_text_color(30, 30, 30)
+ 
+    def table_row(values, widths, fill=False):
+        pdf.set_font("Arial", '', 9)
+        pdf.set_fill_color(245, 245, 245)
+        for val, w in zip(values, widths):
+            pdf.cell(w, 6, str(val), border=1, fill=fill)
+        pdf.ln()
+ 
+    section_title("1. Room Status Overview", 41, 128, 185)
+    table_header(
+        ['Room Type', 'Total', 'Available', 'Occupied', 'Reserved', 'Maintenance'],
+        [50, 25, 30, 30, 30, 35],
+        41, 128, 185
+    )
+    for i, row in enumerate(room_summary):
+        table_row([
+            row['room_type'], row['total'],
+            row['available'], row['occupied'],
+            row['reserved'],  row['maintenance']
+        ], [50, 25, 30, 30, 30, 35], fill=(i % 2 == 1))
+ 
+    pdf.ln(6)
+ 
+    # --- SECTION 2: AMENITIES ---
+    section_title("2. Room Amenities Inventory", 22, 160, 133)
+    table_header(
+        ['Amenity Name', 'Category', 'Total Assigned', 'Status'],
+        [70, 40, 40, 40],
+        22, 160, 133
+    )
+    for i, row in enumerate(amenities):
+        # Color-code the status cell
+        status = row['stock_status']
+        table_row([
+            row['item_name'], row['category'],
+            row['total_assigned'], status
+        ], [70, 40, 40, 40], fill=(i % 2 == 1))
+ 
+    pdf.ln(6)
+ 
+    # --- SECTION 3: SUPPLIES ---
+    section_title("3. General Supplies & Assets", 155, 89, 182)
+    table_header(
+        ['Supply / Asset Name', 'Supply Status', 'Total Assigned'],
+        [90, 55, 45],
+        155, 89, 182
+    )
+    for i, row in enumerate(supplies):
+        table_row([
+            row['item_name'],
+            row['supply_status'] or 'OK',
+            row['total_assigned']
+        ], [90, 55, 45], fill=(i % 2 == 1))
+ 
+    pdf.ln(8)
+ 
+    # --- FOOTER ---
+    pdf.set_font("Arial", 'I', 9)
+    pdf.set_text_color(150, 150, 150)
+    pdf.set_line_width(0.4)
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(3)
+    pdf.cell(0, 5, "End of Report  -  Tony's Apartelle Hotel Management System", ln=True, align='C')
+ 
+    # --- SAVE & SEND ---
+    import io
+    pdf_bytes = pdf.output()
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        as_attachment=True,
+        download_name="Inventory_Report.pdf",
+        mimetype="application/pdf"
+)
+ 
 
 # ===========================================================
 # MODULE 13 — Income Report Dashboard

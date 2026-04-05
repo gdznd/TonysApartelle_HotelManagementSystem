@@ -4,11 +4,11 @@ import axios from 'axios';
 const API = 'http://127.0.0.1:5000';
 
 export default function Inventory() {
-    const [selectedRoom, setSelectedRoom] = useState('');
-    const [rooms, setRooms]               = useState([]);
-    const [roomAmenities, setRoomAmenities] = useState([]);
-    const [supplies, setSupplies]         = useState([]);
-    const [generating, setGenerating]     = useState(false);
+    const [selectedRoom, setSelectedRoom]         = useState('');
+    const [rooms, setRooms]                       = useState([]);
+    const [roomAmenities, setRoomAmenities]       = useState([]);
+    const [supplies, setSupplies]                 = useState([]);
+    const [generating, setGenerating]             = useState(false);
     const [loadingAmenities, setLoadingAmenities] = useState(false);
 
     // Load rooms and supplies on mount
@@ -40,10 +40,10 @@ export default function Inventory() {
         setGenerating(true);
         axios.get(`${API}/api/inventory/report`, { responseType: 'blob' })
             .then(res => {
-                const url    = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
-                const link   = document.createElement('a');
-                const date   = new Date().toISOString().slice(0, 10);
-                link.href    = url;
+                const url     = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+                const link    = document.createElement('a');
+                const date    = new Date().toISOString().slice(0, 10);
+                link.href     = url;
                 link.download = `Inventory_Report_${date}.pdf`;
                 document.body.appendChild(link);
                 link.click();
@@ -54,22 +54,23 @@ export default function Inventory() {
             .finally(() => setGenerating(false));
     };
 
-    // Derive stock status for supplies
+    // Status badge config — matches your DB enum: 'In Stock','Low Stock','Unavailable'
     const getSupplyStatus = (supply) => {
-        if (!supply.status) return { label: 'OK', color: '#28a745' };
-        const s = supply.status.toLowerCase();
-        if (s.includes('restock') || s.includes('low')) return { label: 'Restock Alert', color: '#dc3545' };
-        if (s.includes('ok') || s.includes('available')) return { label: 'OK', color: '#28a745' };
-        return { label: supply.status, color: '#ffc107' };
+        if (!supply.status) return { label: 'In Stock', color: '#28a745' };
+        switch (supply.status) {
+            case 'In Stock':    return { label: 'In Stock',      color: '#28a745' };
+            case 'Low Stock':   return { label: 'Restock Alert', color: '#dc3545' };
+            case 'Unavailable': return { label: 'Unavailable',   color: '#6c757d' };
+            default:            return { label: supply.status,   color: '#ffc107' };
+        }
     };
 
-    // Derive amenity status from quantity
+    // Amenity status based on quantity
     const getAmenityStatus = (qty) => {
-        if (qty === 0) return { label: 'Missing', color: '#dc3545' };
-        return { label: 'OK', color: '#28a745' };
+        if (qty === 0) return { label: 'Missing',  color: '#dc3545' };
+        if (qty === 1) return { label: 'Low',      color: '#ffc107' };
+        return              { label: 'OK',         color: '#28a745' };
     };
-
-    const selectedRoomName = rooms.find(r => r.id == selectedRoom);
 
     return (
         <div style={{ padding: '20px', fontFamily: "'Segoe UI', sans-serif" }}>
@@ -78,7 +79,7 @@ export default function Inventory() {
                 Inventory data is automatically tracked from Module 2 (Amenities) and Module 4 (Supplies).
             </p>
 
-            {/* TWO-COLUMN LAYOUT matching SIA mockup */}
+            {/* TWO-COLUMN LAYOUT */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '28px' }}>
 
                 {/* LEFT: Room Inventory Check */}
@@ -101,7 +102,9 @@ export default function Inventory() {
                     </div>
 
                     {loadingAmenities ? (
-                        <p style={{ color: '#aaa', textAlign: 'center', padding: '20px' }}>Loading amenities...</p>
+                        <p style={{ color: '#aaa', textAlign: 'center', padding: '20px' }}>
+                            Loading amenities...
+                        </p>
                     ) : (
                         <table style={tableStyle}>
                             <thead>
@@ -116,11 +119,20 @@ export default function Inventory() {
                                 {roomAmenities.map((a, i) => {
                                     const status = getAmenityStatus(a.quantity);
                                     return (
-                                        <tr key={a.id} style={{ background: i % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #eee' }}>
+                                        <tr key={a.id} style={{
+                                            background: i % 2 === 0 ? 'white' : '#fafafa',
+                                            borderBottom: '1px solid #eee'
+                                        }}>
                                             <td style={tdStyle}>{a.name}</td>
-                                            <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold' }}>{a.quantity}</td>
+                                            <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold' }}>
+                                                {a.quantity}
+                                            </td>
                                             <td style={{ ...tdStyle, textAlign: 'center' }}>
-                                                <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', background: status.color, color: 'white' }}>
+                                                <span style={{
+                                                    padding: '2px 8px', borderRadius: '4px',
+                                                    fontSize: '11px', fontWeight: 'bold',
+                                                    background: status.color, color: 'white'
+                                                }}>
                                                     {status.label}
                                                 </span>
                                             </td>
@@ -131,9 +143,11 @@ export default function Inventory() {
                                     );
                                 })}
                                 {roomAmenities.length === 0 && (
-                                    <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
-                                        No amenities assigned to this room.
-                                    </td></tr>
+                                    <tr>
+                                        <td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+                                            No amenities assigned to this room.
+                                        </td>
+                                    </tr>
                                 )}
                             </tbody>
                         </table>
@@ -151,8 +165,7 @@ export default function Inventory() {
                         <thead>
                             <tr style={{ background: '#f0f0f0' }}>
                                 <th style={thStyle}>Item Name</th>
-                                <th style={{ ...thStyle, textAlign: 'center' }}>Current Stock</th>
-                                <th style={{ ...thStyle, textAlign: 'center' }}>Min Stock</th>
+                                <th style={{ ...thStyle, textAlign: 'center' }}>Unit Cost</th>
                                 <th style={{ ...thStyle, textAlign: 'center' }}>Status</th>
                             </tr>
                         </thead>
@@ -160,16 +173,20 @@ export default function Inventory() {
                             {supplies.map((s, i) => {
                                 const st = getSupplyStatus(s);
                                 return (
-                                    <tr key={s.id} style={{ background: i % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #eee' }}>
+                                    <tr key={s.id} style={{
+                                        background: i % 2 === 0 ? 'white' : '#fafafa',
+                                        borderBottom: '1px solid #eee'
+                                    }}>
                                         <td style={tdStyle}>{s.name}</td>
                                         <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold' }}>
-                                            {s.quantity || s.stock || '—'}
-                                        </td>
-                                        <td style={{ ...tdStyle, textAlign: 'center', color: '#888' }}>
-                                            {s.min_stock || s.reorder_level || '—'}
+                                            {s.cost ? `₱${parseFloat(s.cost).toLocaleString()}` : '—'}
                                         </td>
                                         <td style={{ ...tdStyle, textAlign: 'center' }}>
-                                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', background: st.color, color: 'white' }}>
+                                            <span style={{
+                                                padding: '2px 8px', borderRadius: '4px',
+                                                fontSize: '11px', fontWeight: 'bold',
+                                                background: st.color, color: 'white'
+                                            }}>
                                                 {st.label}
                                             </span>
                                         </td>
@@ -177,16 +194,18 @@ export default function Inventory() {
                                 );
                             })}
                             {supplies.length === 0 && (
-                                <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
-                                    No supplies found.
-                                </td></tr>
+                                <tr>
+                                    <td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+                                        No supplies found.
+                                    </td>
+                                </tr>
                             )}
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            {/* GENERATE REPORT BUTTON */}
+            {/* GENERATE PDF BUTTON */}
             <div style={{ ...cardStyle, textAlign: 'center', maxWidth: '500px' }}>
                 <h3 style={{ margin: '0 0 8px 0', color: '#333' }}>📊 Generate Full Inventory Report</h3>
                 <p style={{ fontSize: '13px', color: '#777', marginBottom: '20px' }}>
@@ -195,7 +214,11 @@ export default function Inventory() {
                 <button
                     onClick={handleDownload}
                     disabled={generating}
-                    style={{ ...btnStyle, opacity: generating ? 0.7 : 1, cursor: generating ? 'not-allowed' : 'pointer' }}
+                    style={{
+                        ...btnStyle,
+                        opacity: generating ? 0.7 : 1,
+                        cursor: generating ? 'not-allowed' : 'pointer'
+                    }}
                 >
                     {generating ? '⏳ Generating...' : '🖨️  Download PDF Report'}
                 </button>
@@ -211,8 +234,12 @@ export default function Inventory() {
 
 // --- HELPERS ---
 const sectionHeader = (color) => ({
-    color, marginTop: 0, marginBottom: '16px', fontSize: '15px',
-    borderBottom: `2px solid ${color}`, paddingBottom: '8px'
+    color,
+    marginTop: 0,
+    marginBottom: '16px',
+    fontSize: '15px',
+    borderBottom: `2px solid ${color}`,
+    paddingBottom: '8px'
 });
 
 // --- STYLES ---

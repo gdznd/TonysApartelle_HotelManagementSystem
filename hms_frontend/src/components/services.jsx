@@ -3,6 +3,18 @@ import axios from 'axios';
 
 const API = 'http://127.0.0.1:5000';
 
+// Staff options filtered by request type
+const getStaffOptions = (type) => {
+    switch (type) {
+        case 'Housekeeping':     return ['Ana (Housekeeping)', 'Maria (Housekeeping)'];
+        case 'Maintenance':      return ['John (Maintenance)', 'Carlo (Maintenance)'];
+        case 'Room Service':     return ['Chef Mario (Kitchen)', 'Chef Rosa (Kitchen)'];
+        case 'Amenities':        return ['Front Desk', 'Ana (Housekeeping)'];
+        case 'Technical Support':return ['John (Maintenance)', 'IT Support'];
+        default:                 return ['Front Desk'];
+    }
+};
+
 export default function Services() {
     const [activeGuests, setActiveGuests] = useState([]);
     const [requests, setRequests]         = useState([]);
@@ -11,8 +23,10 @@ export default function Services() {
 
     const [formData, setFormData] = useState({
         booking_id: '', room_id: '', room_number: '', guest_name: '',
-        request_type: 'Housekeeping', description: '',
-        service_charge: 0, staff_name: 'Ana (Housekeeping)'
+        request_type: 'Housekeeping',
+        description: '',
+        service_charge: 0,
+        staff_name: 'Ana (Housekeeping)'
     });
 
     // DND/MUR flags keyed by room_id
@@ -34,6 +48,7 @@ export default function Services() {
             .finally(() => setLoading(false));
     };
 
+    // Auto-fill room + guest when dropdown changes
     const handleGuestSelect = (e) => {
         const selectedId = parseInt(e.target.value);
         const guest = activeGuests.find(g => g.booking_id === selectedId);
@@ -46,18 +61,34 @@ export default function Services() {
                 guest_name:  `${guest.first_name} ${guest.last_name}`
             }));
         } else {
-            setFormData(prev => ({ ...prev, booking_id: '', room_id: '', room_number: '', guest_name: '' }));
+            setFormData(prev => ({
+                ...prev,
+                booking_id: '', room_id: '', room_number: '', guest_name: ''
+            }));
         }
     };
 
+    // When request type changes, auto-reset staff to first valid option
+    const handleTypeChange = (e) => {
+        const newType = e.target.value;
+        setFormData(prev => ({
+            ...prev,
+            request_type: newType,
+            staff_name:   getStaffOptions(newType)[0]
+        }));
+    };
+
+    // Submit new service request
     const handleSubmit = (e) => {
         e.preventDefault();
         if (!formData.booking_id) return alert('Please select an active guest.');
 
-        // Warn if room is DND
+        // Warn if DND
         const flags = roomFlags[formData.room_id] || {};
         if (flags.dnd) {
-            const ok = window.confirm(`⚠️ Room ${formData.room_number} is set to Do Not Disturb.\nAre you sure you want to log this request?`);
+            const ok = window.confirm(
+                `⚠️ Room ${formData.room_number} is set to Do Not Disturb.\nAre you sure you want to log this request?`
+            );
             if (!ok) return;
         }
 
@@ -81,10 +112,17 @@ export default function Services() {
     // Pending → In Progress → Completed
     const cycleStatus = (id, currentStatus) => {
         const next = currentStatus === 'Pending' ? 'In Progress' : 'Completed';
-        const url  = next === 'In Progress'
-            ? `${API}/api/services/progress/${id}`
-            : `${API}/api/services/complete/${id}`;
-        axios.put(url).then(() => fetchRequests()).catch(err => console.error(err));
+        axios.put(`${API}/api/services/update-status/${id}`, { status: next })
+            .then(() => fetchRequests())
+            .catch(err => console.error(err));
+    };
+
+    // Delete a completed request
+    const handleDelete = (id) => {
+        if (!window.confirm('Delete this completed request? This cannot be undone.')) return;
+        axios.delete(`${API}/api/services/delete/${id}`)
+            .then(() => fetchRequests())
+            .catch(err => { console.error(err); alert('Error deleting request.'); });
     };
 
     // DND / MUR toggle
@@ -100,6 +138,7 @@ export default function Services() {
             .catch(() => alert('Could not update room flag.'));
     };
 
+    // Derived stats
     const pendingCount    = requests.filter(r => r.status === 'Pending').length;
     const inProgressCount = requests.filter(r => r.status === 'In Progress').length;
     const totalCharges    = requests.reduce((s, r) => s + parseFloat(r.service_charge || 0), 0);
@@ -125,6 +164,7 @@ export default function Services() {
                 <h3 style={headerBlue}>Log New Request</h3>
                 <form onSubmit={handleSubmit} style={gridStyle}>
 
+                    {/* Guest Selector */}
                     <div style={{ gridColumn: 'span 2' }}>
                         <label style={labelStyle}>Select Active Guest / Room *</label>
                         <select style={inputStyle} value={formData.booking_id} onChange={handleGuestSelect} required>
@@ -140,15 +180,15 @@ export default function Services() {
                             <span style={{ fontSize: '12px', color: '#28a745', marginTop: '4px', display: 'block' }}>
                                 ✓ {formData.guest_name} — Room {formData.room_number}
                                 {currentFlags.dnd && <span style={{ marginLeft: '10px', color: '#dc3545', fontWeight: 'bold' }}>🚫 DND</span>}
-                                {currentFlags.mur && <span style={{ marginLeft: '6px', color: '#28a745', fontWeight: 'bold' }}>🧹 MUR</span>}
+                                {currentFlags.mur && <span style={{ marginLeft: '6px',  color: '#28a745', fontWeight: 'bold' }}>🧹 MUR</span>}
                             </span>
                         )}
                     </div>
 
+                    {/* Request Type */}
                     <div>
                         <label style={labelStyle}>Request Type</label>
-                        <select style={inputStyle} value={formData.request_type}
-                            onChange={e => setFormData({ ...formData, request_type: e.target.value })}>
+                        <select style={inputStyle} value={formData.request_type} onChange={handleTypeChange}>
                             <option>Housekeeping</option>
                             <option>Maintenance</option>
                             <option>Room Service</option>
@@ -157,31 +197,44 @@ export default function Services() {
                         </select>
                     </div>
 
+                    {/* Charge */}
                     <div>
                         <label style={labelStyle}>
                             Charge Amount (₱)
-                            <span style={{ fontSize: '11px', color: '#888', fontWeight: 'normal' }}> — added to balance if &gt; 0</span>
+                            <span style={{ fontSize: '11px', color: '#888', fontWeight: 'normal' }}>
+                                &nbsp;— added to balance if &gt; 0
+                            </span>
                         </label>
-                        <input type="number" min="0" step="0.01" style={inputStyle} placeholder="0.00"
+                        <input
+                            type="number" min="0" step="0.01"
+                            style={inputStyle} placeholder="0.00"
                             value={formData.service_charge}
-                            onChange={e => setFormData({ ...formData, service_charge: e.target.value })} />
+                            onChange={e => setFormData({ ...formData, service_charge: e.target.value })}
+                        />
                     </div>
 
+                    {/* Description */}
                     <div style={{ gridColumn: 'span 2' }}>
                         <label style={labelStyle}>Specific Description</label>
-                        <input placeholder="e.g., Extra Blanket, Aircon Leaking, Burger & Fries..."
-                            style={inputStyle} value={formData.description}
-                            onChange={e => setFormData({ ...formData, description: e.target.value })} />
+                        <input
+                            placeholder="e.g., Extra Blanket, Aircon Leaking, Burger & Fries..."
+                            style={inputStyle}
+                            value={formData.description}
+                            onChange={e => setFormData({ ...formData, description: e.target.value })}
+                        />
                     </div>
 
+                    {/* Staff — filtered by request type */}
                     <div style={{ gridColumn: 'span 2' }}>
                         <label style={labelStyle}>Assigned Staff</label>
-                        <select style={inputStyle} value={formData.staff_name}
-                            onChange={e => setFormData({ ...formData, staff_name: e.target.value })}>
-                            <option>Ana (Housekeeping)</option>
-                            <option>John (Maintenance)</option>
-                            <option>Chef Mario (Kitchen)</option>
-                            <option>Front Desk</option>
+                        <select
+                            style={inputStyle}
+                            value={formData.staff_name}
+                            onChange={e => setFormData({ ...formData, staff_name: e.target.value })}
+                        >
+                            {getStaffOptions(formData.request_type).map(s => (
+                                <option key={s}>{s}</option>
+                            ))}
                         </select>
                     </div>
 
@@ -189,7 +242,9 @@ export default function Services() {
                     <div style={{ gridColumn: 'span 2', borderTop: '1px solid #eee', paddingTop: '16px' }}>
                         <label style={{ ...labelStyle, marginBottom: '12px' }}>
                             Room Status Toggles
-                            {formData.room_number && <span style={{ color: '#888', fontWeight: 'normal' }}> — Room {formData.room_number}</span>}
+                            {formData.room_number && (
+                                <span style={{ color: '#888', fontWeight: 'normal' }}> — Room {formData.room_number}</span>
+                            )}
                         </label>
                         <div style={{ display: 'flex', gap: '40px', flexWrap: 'wrap' }}>
                             <Toggle
@@ -208,12 +263,17 @@ export default function Services() {
                             />
                         </div>
                         {!formData.room_id && (
-                            <p style={{ fontSize: '11px', color: '#bbb', marginTop: '6px' }}>Select a guest to enable toggles.</p>
+                            <p style={{ fontSize: '11px', color: '#bbb', marginTop: '6px' }}>
+                                Select a guest to enable toggles.
+                            </p>
                         )}
                     </div>
 
-                    <button type="submit" disabled={submitting}
-                        style={{ ...btnBlue, opacity: submitting ? 0.7 : 1 }}>
+                    <button
+                        type="submit"
+                        disabled={submitting}
+                        style={{ ...btnBlue, opacity: submitting ? 0.7 : 1 }}
+                    >
                         {submitting ? 'Logging...' : '📋 Log Request'}
                     </button>
                 </form>
@@ -222,7 +282,7 @@ export default function Services() {
             {/* TABLE */}
             <h3 style={{ marginTop: '40px', color: '#333' }}>
                 All Service Requests
-                {pendingCount > 0    && <span style={badgeRed}>{pendingCount} Pending</span>}
+                {pendingCount    > 0 && <span style={badgeRed}>{pendingCount} Pending</span>}
                 {inProgressCount > 0 && <span style={badgeBlue}>{inProgressCount} In Progress</span>}
             </h3>
 
@@ -240,32 +300,79 @@ export default function Services() {
                         </thead>
                         <tbody>
                             {requests.map(r => (
-                                <tr key={r.id} style={{ borderBottom: '1px solid #eee', background: r.status === 'Completed' ? '#f8f9fa' : 'white' }}>
-                                    <td style={{ ...tdStyle, fontSize: '11px', color: '#007bff', fontWeight: 'bold' }}>{r.booking_reference}</td>
-                                    <td style={{ ...tdStyle, fontWeight: 'bold', textAlign: 'center' }}>{r.room_number}</td>
-                                    <td style={{ ...tdStyle, fontSize: '13px' }}>{r.guest_name}</td>
-                                    <td style={tdStyle}><TypeBadge type={r.request_type} /></td>
-                                    <td style={{ ...tdStyle, color: '#555' }}>{r.description || '—'}</td>
-                                    <td style={{ ...tdStyle, fontWeight: 'bold', color: parseFloat(r.service_charge) > 0 ? '#dc3545' : '#aaa' }}>
-                                        {parseFloat(r.service_charge) > 0 ? `₱${parseFloat(r.service_charge).toLocaleString()}` : '—'}
+                                <tr key={r.id} style={{
+                                    borderBottom: '1px solid #eee',
+                                    background: r.status === 'Completed' ? '#f8f9fa' : 'white'
+                                }}>
+                                    <td style={{ ...tdStyle, fontSize: '11px', color: '#007bff', fontWeight: 'bold' }}>
+                                        {r.booking_reference}
                                     </td>
-                                    <td style={{ ...tdStyle, fontSize: '13px' }}>{r.staff_name}</td>
-                                    <td style={tdStyle}><StatusBadge status={r.status} /></td>
+                                    <td style={{ ...tdStyle, fontWeight: 'bold' }}>
+                                        {r.room_number}
+                                    </td>
+                                    <td style={{ ...tdStyle, fontSize: '13px' }}>
+                                        {r.guest_name}
+                                    </td>
                                     <td style={tdStyle}>
-                                        {r.status !== 'Completed' && (
-                                            <button onClick={() => cycleStatus(r.id, r.status)} style={{
-                                                background: r.status === 'Pending' ? '#007bff' : '#28a745',
-                                                color: 'white', border: 'none', padding: '5px 10px',
-                                                borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold'
-                                            }}>
-                                                {r.status === 'Pending' ? '▶ In Progress' : '✓ Complete'}
-                                            </button>
-                                        )}
+                                        <TypeBadge type={r.request_type} />
+                                    </td>
+                                    <td style={{ ...tdStyle, color: '#555' }}>
+                                        {r.description || '—'}
+                                    </td>
+                                    <td style={{
+                                        ...tdStyle, fontWeight: 'bold',
+                                        color: parseFloat(r.service_charge) > 0 ? '#dc3545' : '#aaa'
+                                    }}>
+                                        {parseFloat(r.service_charge) > 0
+                                            ? `₱${parseFloat(r.service_charge).toLocaleString()}`
+                                            : '—'}
+                                    </td>
+                                    <td style={{ ...tdStyle, fontSize: '13px' }}>
+                                        {r.staff_name}
+                                    </td>
+                                    <td style={tdStyle}>
+                                        <StatusBadge status={r.status} />
+                                    </td>
+                                    <td style={tdStyle}>
+                                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                            {/* Cycle status button — hidden once Completed */}
+                                            {r.status !== 'Completed' && (
+                                                <button
+                                                    onClick={() => cycleStatus(r.id, r.status)}
+                                                    style={{
+                                                        background: r.status === 'Pending' ? '#007bff' : '#28a745',
+                                                        color: 'white', border: 'none', padding: '5px 10px',
+                                                        borderRadius: '4px', cursor: 'pointer',
+                                                        fontSize: '12px', fontWeight: 'bold'
+                                                    }}
+                                                >
+                                                    {r.status === 'Pending' ? '▶ Mark In Progress' : '✓ Mark Complete'}
+                                                </button>
+                                            )}
+                                            {/* Delete — only for Completed */}
+                                            {r.status === 'Completed' && (
+                                                <button
+                                                    onClick={() => handleDelete(r.id)}
+                                                    style={{
+                                                        background: '#dc3545', color: 'white',
+                                                        border: 'none', padding: '5px 10px',
+                                                        borderRadius: '4px', cursor: 'pointer',
+                                                        fontSize: '12px', fontWeight: 'bold'
+                                                    }}
+                                                >
+                                                    🗑 Delete
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))}
                             {requests.length === 0 && (
-                                <tr><td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#aaa' }}>No service requests found.</td></tr>
+                                <tr>
+                                    <td colSpan="9" style={{ padding: '30px', textAlign: 'center', color: '#aaa' }}>
+                                        No service requests found.
+                                    </td>
+                                </tr>
                             )}
                         </tbody>
                     </table>
@@ -276,9 +383,14 @@ export default function Services() {
 }
 
 // --- SUB COMPONENTS ---
+
 function StatCard({ label, value, color }) {
     return (
-        <div style={{ background: 'white', border: `3px solid ${color}`, borderRadius: '8px', padding: '14px 22px', minWidth: '150px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' }}>
+        <div style={{
+            background: 'white', border: `3px solid ${color}`,
+            borderRadius: '8px', padding: '14px 22px',
+            minWidth: '150px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)'
+        }}>
             <div style={{ fontSize: '26px', fontWeight: 'bold', color }}>{value}</div>
             <div style={{ fontSize: '12px', color: '#777', marginTop: '2px' }}>{label}</div>
         </div>
@@ -289,13 +401,19 @@ function Toggle({ label, active, activeColor, disabled, onToggle }) {
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', opacity: disabled ? 0.4 : 1 }}>
             <span style={{ fontSize: '14px', color: '#555', minWidth: '130px' }}>{label}</span>
-            <div onClick={disabled ? null : onToggle} style={{
-                width: '48px', height: '26px', borderRadius: '13px', cursor: disabled ? 'not-allowed' : 'pointer',
-                background: active ? activeColor : '#ccc', position: 'relative', transition: 'background 0.2s'
-            }}>
+            <div
+                onClick={disabled ? null : onToggle}
+                style={{
+                    width: '48px', height: '26px', borderRadius: '13px',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    background: active ? activeColor : '#ccc',
+                    position: 'relative', transition: 'background 0.2s'
+                }}
+            >
                 <div style={{
-                    width: '20px', height: '20px', borderRadius: '50%', background: 'white',
-                    position: 'absolute', top: '3px', left: active ? '25px' : '3px',
+                    width: '20px', height: '20px', borderRadius: '50%',
+                    background: 'white', position: 'absolute', top: '3px',
+                    left: active ? '25px' : '3px',
                     transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
                 }} />
             </div>
@@ -308,20 +426,40 @@ function Toggle({ label, active, activeColor, disabled, onToggle }) {
 
 function TypeBadge({ type }) {
     const colors = {
-        'Housekeeping': { bg: '#e3f2fd', color: '#1565c0' },
-        'Maintenance': { bg: '#fff3e0', color: '#e65100' },
-        'Room Service': { bg: '#e8f5e9', color: '#2e7d32' },
-        'Amenities': { bg: '#f3e5f5', color: '#6a1b9a' },
+        'Housekeeping':      { bg: '#e3f2fd', color: '#1565c0' },
+        'Maintenance':       { bg: '#fff3e0', color: '#e65100' },
+        'Room Service':      { bg: '#e8f5e9', color: '#2e7d32' },
+        'Amenities':         { bg: '#f3e5f5', color: '#6a1b9a' },
         'Technical Support': { bg: '#fce4ec', color: '#880e4f' },
     };
     const c = colors[type] || { bg: '#f0f0f0', color: '#333' };
-    return <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', background: c.bg, color: c.color }}>{type}</span>;
+    return (
+        <span style={{
+            padding: '3px 8px', borderRadius: '4px',
+            fontSize: '11px', fontWeight: 'bold',
+            background: c.bg, color: c.color
+        }}>
+            {type}
+        </span>
+    );
 }
 
 function StatusBadge({ status }) {
-    const map = { 'Pending': { bg: '#ffc107', color: '#333' }, 'In Progress': { bg: '#007bff', color: 'white' }, 'Completed': { bg: '#28a745', color: 'white' } };
+    const map = {
+        'Pending':     { bg: '#ffc107', color: '#333' },
+        'In Progress': { bg: '#007bff', color: 'white' },
+        'Completed':   { bg: '#28a745', color: 'white' },
+    };
     const s = map[status] || { bg: '#eee', color: '#333' };
-    return <span style={{ padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', background: s.bg, color: s.color }}>{status}</span>;
+    return (
+        <span style={{
+            padding: '3px 8px', borderRadius: '4px',
+            fontSize: '11px', fontWeight: 'bold',
+            background: s.bg, color: s.color
+        }}>
+            {status}
+        </span>
+    );
 }
 
 // --- STYLES ---
