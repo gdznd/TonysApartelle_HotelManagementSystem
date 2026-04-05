@@ -1,119 +1,225 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+
+const API = 'http://127.0.0.1:5000';
 
 export default function Inventory() {
+    const [selectedRoom, setSelectedRoom] = useState('');
+    const [rooms, setRooms]               = useState([]);
+    const [roomAmenities, setRoomAmenities] = useState([]);
+    const [supplies, setSupplies]         = useState([]);
+    const [generating, setGenerating]     = useState(false);
+    const [loadingAmenities, setLoadingAmenities] = useState(false);
 
-    const generatePDF = () => {
-        axios.get('http://127.0.0.1:5000/api/inventory/report')
+    // Load rooms and supplies on mount
+    useEffect(() => {
+        axios.get(`${API}/api/rooms`)
             .then(res => {
-                const { amenities, supplies } = res.data;
-                const doc = new jsPDF();
-
-                // -- TITLE --
-                doc.setFontSize(20);
-                doc.setTextColor(40);
-                doc.text("Hotel Inventory Report", 14, 22);
-                
-                doc.setFontSize(11);
-                doc.setTextColor(100);
-                const date = new Date().toLocaleString();
-                doc.text(`Generated on: ${date}`, 14, 30);
-
-                // -- SECTION 1: AMENITIES --
-                doc.setFontSize(14);
-                doc.setTextColor(0);
-                doc.text("1. Room Amenities", 14, 45);
-
-                const amenitiesRows = amenities.map(item => [
-                    item.name || item.amenity_name, 
-                    item.quantity || item.stock_qty || 0, 
-                    item.status || (item.quantity < 50 ? "Restock" : "OK")
-                ]);
-
-                doc.autoTable({
-                    startY: 50,
-                    head: [['Item Name', 'Current Stock', 'Status']],
-                    body: amenitiesRows,
-                    theme: 'striped',
-                    headStyles: { fillColor: [22, 160, 133] } // Green header
-                });
-
-                // -- SECTION 2: SUPPLIES / ASSETS --
-                // Calculate Y position based on where the first table ended
-                const finalY = doc.lastAutoTable.finalY + 20;
-                
-                doc.setFontSize(14);
-                doc.text("2. General Supplies & Assets", 14, finalY - 5);
-
-                const suppliesRows = supplies.map(item => [
-                    item.name || item.item_name,
-                    item.quantity || item.stock || 0,
-                    item.status || "OK"
-                ]);
-
-                doc.autoTable({
-                    startY: finalY,
-                    head: [['Asset / Supply', 'Quantity', 'Condition / Status']],
-                    body: suppliesRows,
-                    theme: 'striped',
-                    headStyles: { fillColor: [41, 128, 185] } // Blue header
-                });
-
-                // -- FOOTER --
-                doc.setFontSize(10);
-                doc.text("End of Report", 14, doc.lastAutoTable.finalY + 20);
-
-                // Save File
-                doc.save(`Inventory_Report_${Date.now()}.pdf`);
+                setRooms(res.data);
+                if (res.data.length > 0) setSelectedRoom(res.data[0].id);
             })
-            .catch(err => alert("Error generating report. Check console."));
+            .catch(err => console.error(err));
+
+        axios.get(`${API}/api/supplies`)
+            .then(res => setSupplies(res.data))
+            .catch(err => console.error(err));
+    }, []);
+
+    // Load amenities whenever selected room changes
+    useEffect(() => {
+        if (!selectedRoom) return;
+        setLoadingAmenities(true);
+        axios.get(`${API}/api/rooms/${selectedRoom}/amenities`)
+            .then(res => setRoomAmenities(res.data))
+            .catch(err => console.error(err))
+            .finally(() => setLoadingAmenities(false));
+    }, [selectedRoom]);
+
+    // Download PDF from backend
+    const handleDownload = () => {
+        setGenerating(true);
+        axios.get(`${API}/api/inventory/report`, { responseType: 'blob' })
+            .then(res => {
+                const url    = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+                const link   = document.createElement('a');
+                const date   = new Date().toISOString().slice(0, 10);
+                link.href    = url;
+                link.download = `Inventory_Report_${date}.pdf`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(url);
+            })
+            .catch(() => alert('Error generating report. Make sure the Flask server is running.'))
+            .finally(() => setGenerating(false));
     };
 
+    // Derive stock status for supplies
+    const getSupplyStatus = (supply) => {
+        if (!supply.status) return { label: 'OK', color: '#28a745' };
+        const s = supply.status.toLowerCase();
+        if (s.includes('restock') || s.includes('low')) return { label: 'Restock Alert', color: '#dc3545' };
+        if (s.includes('ok') || s.includes('available')) return { label: 'OK', color: '#28a745' };
+        return { label: supply.status, color: '#ffc107' };
+    };
+
+    // Derive amenity status from quantity
+    const getAmenityStatus = (qty) => {
+        if (qty === 0) return { label: 'Missing', color: '#dc3545' };
+        return { label: 'OK', color: '#28a745' };
+    };
+
+    const selectedRoomName = rooms.find(r => r.id == selectedRoom);
+
     return (
-        <div style={{ padding: '40px', fontFamily: 'Arial, sans-serif' }}>
-            <h2>Module 11: Inventory Management</h2>
-            <p style={{ color: '#666' }}>
+        <div style={{ padding: '20px', fontFamily: "'Segoe UI', sans-serif" }}>
+            <h2 style={{ color: '#333', marginBottom: '4px' }}>Module 11: Inventory Report of Amenities</h2>
+            <p style={{ color: '#888', fontSize: '13px', marginTop: 0, marginBottom: '24px' }}>
                 Inventory data is automatically tracked from Module 2 (Amenities) and Module 4 (Supplies).
             </p>
 
-            <div style={cardStyle}>
-                <div style={{ marginBottom: '20px' }}>
-                    <h3 style={{ margin: 0, color: '#333' }}>Monthly Inventory Report</h3>
-                    <p style={{ fontSize: '14px', color: '#777' }}>
-                        Generates a PDF summary of all room amenities, consumables, and fixed assets.
-                    </p>
+            {/* TWO-COLUMN LAYOUT matching SIA mockup */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '28px' }}>
+
+                {/* LEFT: Room Inventory Check */}
+                <div style={cardStyle}>
+                    <h3 style={sectionHeader('#007bff')}>🏨 Room Inventory Check</h3>
+
+                    <div style={{ marginBottom: '16px' }}>
+                        <label style={labelStyle}>Select Room</label>
+                        <select
+                            style={inputStyle}
+                            value={selectedRoom}
+                            onChange={e => setSelectedRoom(e.target.value)}
+                        >
+                            {rooms.map(r => (
+                                <option key={r.id} value={r.id}>
+                                    Room {r.room_number} ({r.room_type})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {loadingAmenities ? (
+                        <p style={{ color: '#aaa', textAlign: 'center', padding: '20px' }}>Loading amenities...</p>
+                    ) : (
+                        <table style={tableStyle}>
+                            <thead>
+                                <tr style={{ background: '#f0f0f0' }}>
+                                    <th style={thStyle}>Amenity Name</th>
+                                    <th style={{ ...thStyle, textAlign: 'center' }}>Qty</th>
+                                    <th style={{ ...thStyle, textAlign: 'center' }}>Status</th>
+                                    <th style={thStyle}>Last Checked</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {roomAmenities.map((a, i) => {
+                                    const status = getAmenityStatus(a.quantity);
+                                    return (
+                                        <tr key={a.id} style={{ background: i % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #eee' }}>
+                                            <td style={tdStyle}>{a.name}</td>
+                                            <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold' }}>{a.quantity}</td>
+                                            <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', background: status.color, color: 'white' }}>
+                                                    {status.label}
+                                                </span>
+                                            </td>
+                                            <td style={{ ...tdStyle, fontSize: '12px', color: '#888' }}>
+                                                {new Date().toISOString().slice(0, 10)}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                                {roomAmenities.length === 0 && (
+                                    <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+                                        No amenities assigned to this room.
+                                    </td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    )}
                 </div>
-                
-                <button onClick={generatePDF} style={btnStyle}>
-                    🖨️ Download PDF Report
+
+                {/* RIGHT: Apartelle-wide Supplies */}
+                <div style={cardStyle}>
+                    <h3 style={sectionHeader('#28a745')}>📦 Apartelle-wide Items (Supplies)</h3>
+                    <p style={{ fontSize: '12px', color: '#888', marginTop: '-8px', marginBottom: '12px' }}>
+                        Physical inventory count: every 30 days
+                    </p>
+
+                    <table style={tableStyle}>
+                        <thead>
+                            <tr style={{ background: '#f0f0f0' }}>
+                                <th style={thStyle}>Item Name</th>
+                                <th style={{ ...thStyle, textAlign: 'center' }}>Current Stock</th>
+                                <th style={{ ...thStyle, textAlign: 'center' }}>Min Stock</th>
+                                <th style={{ ...thStyle, textAlign: 'center' }}>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {supplies.map((s, i) => {
+                                const st = getSupplyStatus(s);
+                                return (
+                                    <tr key={s.id} style={{ background: i % 2 === 0 ? 'white' : '#fafafa', borderBottom: '1px solid #eee' }}>
+                                        <td style={tdStyle}>{s.name}</td>
+                                        <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 'bold' }}>
+                                            {s.quantity || s.stock || '—'}
+                                        </td>
+                                        <td style={{ ...tdStyle, textAlign: 'center', color: '#888' }}>
+                                            {s.min_stock || s.reorder_level || '—'}
+                                        </td>
+                                        <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                            <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold', background: st.color, color: 'white' }}>
+                                                {st.label}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                            {supplies.length === 0 && (
+                                <tr><td colSpan="4" style={{ padding: '20px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>
+                                    No supplies found.
+                                </td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* GENERATE REPORT BUTTON */}
+            <div style={{ ...cardStyle, textAlign: 'center', maxWidth: '500px' }}>
+                <h3 style={{ margin: '0 0 8px 0', color: '#333' }}>📊 Generate Full Inventory Report</h3>
+                <p style={{ fontSize: '13px', color: '#777', marginBottom: '20px' }}>
+                    Downloads a PDF covering all rooms, amenities, and supplies.
+                </p>
+                <button
+                    onClick={handleDownload}
+                    disabled={generating}
+                    style={{ ...btnStyle, opacity: generating ? 0.7 : 1, cursor: generating ? 'not-allowed' : 'pointer' }}
+                >
+                    {generating ? '⏳ Generating...' : '🖨️  Download PDF Report'}
                 </button>
+                {generating && (
+                    <p style={{ fontSize: '12px', color: '#888', marginTop: '10px' }}>
+                        Building your report, please wait...
+                    </p>
+                )}
             </div>
         </div>
     );
 }
 
-// --- STYLES ---
-const cardStyle = {
-    background: 'white',
-    padding: '40px',
-    borderRadius: '10px',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-    maxWidth: '500px',
-    textAlign: 'center',
-    border: '1px solid #eee'
-};
+// --- HELPERS ---
+const sectionHeader = (color) => ({
+    color, marginTop: 0, marginBottom: '16px', fontSize: '15px',
+    borderBottom: `2px solid ${color}`, paddingBottom: '8px'
+});
 
-const btnStyle = {
-    padding: '15px 30px',
-    background: '#007bff',
-    color: 'white',
-    border: 'none',
-    borderRadius: '50px',
-    fontSize: '16px',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-    boxShadow: '0 4px 6px rgba(0,123,255,0.3)',
-    transition: 'background 0.2s'
-};
+// --- STYLES ---
+const cardStyle  = { background: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', border: '1px solid #eee' };
+const labelStyle = { display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#555', marginBottom: '5px' };
+const inputStyle = { width: '100%', padding: '9px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '14px', boxSizing: 'border-box' };
+const tableStyle = { width: '100%', borderCollapse: 'collapse', fontSize: '13px' };
+const thStyle    = { padding: '8px 10px', textAlign: 'left', fontSize: '12px', fontWeight: 'bold', color: '#555', borderBottom: '2px solid #eee' };
+const tdStyle    = { padding: '8px 10px', verticalAlign: 'middle', color: '#333' };
+const btnStyle   = { display: 'inline-block', padding: '14px 30px', background: '#007bff', color: 'white', border: 'none', borderRadius: '6px', fontSize: '15px', fontWeight: 'bold', boxShadow: '0 4px 8px rgba(0,123,255,0.25)' };
