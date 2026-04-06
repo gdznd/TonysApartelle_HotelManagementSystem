@@ -612,87 +612,6 @@ def perform_checkin():
     finally:
         conn.close()
 
-# ===========================================================
-# MODULE 10b — Check-in Receipt Generation
-# ===========================================================
-@app.route('/api/checkin/receipt/<int:booking_id>', methods=['GET'])
-def generate_checkin_receipt(booking_id):
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    filename = None
-    try:
-        # Fetch booking + room
-        cursor.execute("""
-            SELECT b.booking_reference, CONCAT(b.first_name, ' ', b.last_name) AS guest_name,
-                   r.room_number, r.room_type
-            FROM bookings b
-            JOIN rooms r ON b.room_id = r.id
-            WHERE b.id = %s
-        """, (booking_id,))
-        booking = cursor.fetchone()
-        if not booking:
-            return jsonify({"message": "Booking not found"}), 404
-
-        # Fetch latest checkin record for this booking
-        cursor.execute("SELECT * FROM checkins WHERE booking_id = %s ORDER BY checkin_time DESC LIMIT 1", (booking_id,))
-        checkin = cursor.fetchone()
-
-        # Build PDF
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(190, 10, txt="TONY'S APARTELLE", ln=True, align='C')
-
-        pdf.set_font("Arial", size=10)
-        pdf.cell(190, 5, txt="WG6V+RX4, Butuan City-Malaybalay Rd", ln=True, align='C')
-        pdf.cell(190, 5, txt="Butuan City, 8600 Agusan del Norte", ln=True, align='C')
-        pdf.cell(190, 5, txt="Phone: 0909 392 9516", ln=True, align='C')
-
-        pdf.ln(8)
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(190, 8, txt="CHECK-IN RECEIPT", ln=True, align='C')
-        pdf.ln(6)
-
-        pdf.set_font("Arial", size=11)
-        pdf.cell(120, 8, txt=f"Guest: {booking['guest_name']}", ln=0)
-        pdf.cell(70, 8, txt=f"Ref: {booking['booking_reference']}", ln=1, align='R')
-        pdf.cell(120, 8, txt=f"Room: {booking['room_type']} - {booking['room_number']}", ln=1)
-
-        if checkin:
-            pdf.cell(120, 8, txt=f"ID Type: {checkin.get('id_type', '')}", ln=0)
-            pdf.cell(70, 8, txt=f"ID No.: {checkin.get('id_number', '')}", ln=1, align='R')
-            pdf.cell(120, 8, txt=f"Key Deposit: {checkin.get('key_deposit', '')}", ln=0)
-            pdf.cell(70, 8, txt=f"Key Issued: {checkin.get('key_issued', '')}", ln=1, align='R')
-            pdf.cell(0, 8, txt=f"Check-in Time: {checkin.get('checkin_time', '')}", ln=1)
-            notes = checkin.get('notes', '') or ''
-            if notes:
-                pdf.ln(3)
-                pdf.multi_cell(0, 6, txt=f"Notes: {notes}")
-        else:
-            pdf.cell(0, 8, txt="No check-in record found for this booking.", ln=1)
-
-        pdf.ln(6)
-        pdf.set_font("Arial", size=10)
-        pdf.multi_cell(0, 6, txt="This document confirms the check-in details. Please present this when requested.")
-
-        filename = f"checkin_receipt_{booking['booking_reference']}.pdf"
-        pdf.output(filename)
-
-        return send_file(filename, as_attachment=True)
-    except Exception as e:
-        return jsonify({"message": str(e)}), 500
-    finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
-        try:
-            if filename and os.path.exists(filename):
-                os.remove(filename)
-        except:
-            pass
-
 # 3. Get Active Check-ins (For the list at the bottom)
 @app.route('/api/checkins/active', methods=['GET'])
 def get_active_checkins():
@@ -710,244 +629,166 @@ def get_active_checkins():
     results = cursor.fetchall()
     conn.close()
     return jsonify(results)
-
-# --- MODULE 8: SERVICES & REQUESTS ---
-
-# 1. GET ACTIVE GUESTS (For the dropdown menu)
-# Reuse the existing /api/checkins/active or make a specific lightweight one
-@app.route('/api/services/guests', methods=['GET'])
-def get_service_guests():
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    # We only want guests who are currently checked in
-    sql = """
-        SELECT b.id as booking_id, b.first_name, b.last_name, r.room_number 
-        FROM bookings b
-        JOIN rooms r ON b.room_id = r.id
-        WHERE b.status = 'Checked-in'
-    """
-    cursor.execute(sql)
-    results = cursor.fetchall()
-    conn.close()
-    return jsonify(results)
-
-# 2. SUBMIT NEW REQUEST
-@app.route('/api/services/create', methods=['POST'])
-def create_service_request():
-    data = request.json
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        sql = """
-            INSERT INTO service_requests (booking_id, request_type, description, service_charge, staff_name, status)
-            VALUES (%s, %s, %s, %s, %s, 'Pending')
-        """
-        cursor.execute(sql, (
-            data['booking_id'],
-            data['request_type'],
-            data['description'],
-            data['service_charge'],
-            data['staff_name']
-        ))
-        conn.commit()
-        return jsonify({"message": "Request logged"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        conn.close()
-
-# 3. GET ALL OPEN REQUESTS (For the table below)
+    
+# GET ALL SERVICE REQUESTS (For the table)
 @app.route('/api/services/list', methods=['GET'])
 def get_service_requests():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     sql = """
-        SELECT s.*, b.first_name, b.last_name, r.room_number
+        SELECT 
+            s.id,
+            s.booking_id,
+            b.booking_reference,
+            CONCAT(b.first_name, ' ', b.last_name) AS guest_name,
+            r.room_number,
+            s.request_type,
+            s.description,
+            s.service_charge,
+            s.staff_name,
+            s.status,
+            s.created_at
         FROM service_requests s
         JOIN bookings b ON s.booking_id = b.id
         JOIN rooms r ON b.room_id = r.id
-        ORDER BY s.status DESC, s.created_at DESC
+        ORDER BY 
+            CASE WHEN s.status = 'Pending' THEN 0
+                 WHEN s.status = 'In Progress' THEN 1
+                 ELSE 2 END,
+            s.created_at DESC
     """
     cursor.execute(sql)
     results = cursor.fetchall()
     conn.close()
     return jsonify(results)
 
-# 4. MARK REQUEST AS COMPLETE
-@app.route('/api/services/complete/<int:id>', methods=['PUT'])
-def complete_request(id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE service_requests SET status = 'Completed' WHERE id = %s", (id,))
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Updated"}), 200
+# --- MODULE 9: SERVICES, REQUESTS & ROOM FLAGS ---
 
-# --- MODULE 9: CHECK-OUT LOGIC ---
-
-# 1. SEARCH: Find guests specifically for Check-out
-@app.route('/api/checkout/search', methods=['GET'])
-def search_checkout_guest():
-    query = request.args.get('q', '')
+# 1. GET ACTIVE GUESTS (Updated to include room_id and sorted by room)
+@app.route('/api/services/guests', methods=['GET'])
+def get_service_guests():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
-    
-    # Only search bookings with status 'Checked-in'
     sql = """
-        SELECT b.*, r.room_number, r.room_type 
+        SELECT
+            b.id          AS booking_id,
+            b.booking_reference,
+            b.first_name,
+            b.last_name,
+            r.id          AS room_id,    
+            r.room_number
         FROM bookings b
         JOIN rooms r ON b.room_id = r.id
         WHERE b.status = 'Checked-in'
-        AND (b.first_name LIKE %s OR r.room_number LIKE %s OR b.id LIKE %s)
+        ORDER BY r.room_number ASC
     """
-    search_term = f"%{query}%"
-    cursor.execute(sql, (search_term, search_term, search_term))
+    cursor.execute(sql)
     results = cursor.fetchall()
     conn.close()
     return jsonify(results)
 
-# 2. SUBMIT CHECK-OUT
-@app.route('/api/checkout/submit', methods=['POST'])
-def perform_checkout():
+# 2. SUBMIT NEW REQUEST (Includes balance calculation and payment entry)
+@app.route('/api/services/create', methods=['POST'])
+def create_service_request():
     data = request.json
     conn = get_db_connection()
-    cursor = conn.cursor()
-
+    cursor = conn.cursor(dictionary=True)
     try:
-        # A. Log the Checkout
-        sql_insert = """
-            INSERT INTO checkouts 
-            (booking_id, checkout_time, amenities_ok, room_condition_ok, key_returned, 
-             damage_notes, damage_charge, final_room_condition, guest_feedback, 
-             total_bill, final_balance_paid)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        cursor.execute(sql_insert, (
-            data['booking_id'],
-            data['checkout_time'],
-            data['amenities_ok'],
-            data['room_condition_ok'],
-            data['key_returned'],
-            data['damage_notes'],
-            data['damage_charge'],
-            data['final_room_condition'],
-            data['guest_feedback'],
-            data['total_bill'],
-            data['final_balance_paid']
+        # A. Insert the service request
+        cursor.execute("""
+            INSERT INTO service_requests 
+                (booking_id, request_type, description, service_charge, staff_name, status)
+            VALUES (%s, %s, %s, %s, %s, 'Pending')
+        """, (
+            data['booking_id'], data['request_type'],
+            data.get('description', ''), data.get('service_charge', 0),
+            data.get('staff_name', 'Unassigned')
         ))
+        new_request_id = cursor.lastrowid
 
-        # B. Update Booking Status to 'Checked-out'
-        cursor.execute("UPDATE bookings SET status = 'Checked-out' WHERE id = %s", (data['booking_id'],))
+        # B. If there's a charge, update the balance in the payments table
+        service_charge = float(data.get('service_charge', 0))
+        if service_charge > 0:
+            cursor.execute("""
+                SELECT b.total_price, COALESCE(SUM(p.amount_paid), 0) AS already_paid
+                FROM bookings b
+                LEFT JOIN payments p ON p.booking_id = b.id
+                WHERE b.id = %s GROUP BY b.id
+            """, (data['booking_id'],))
+            row = cursor.fetchone()
 
-        # C. Update Room Status (e.g., set to 'Dirty' or 'Maintenance' based on inspection)
-        # Assuming the form sends the desired room status
-        new_room_status = 'Dirty' if data['final_room_condition'] == 'Needs Cleaning' else 'Available'
-        if data['final_room_condition'] == 'Maintenance':
-            new_room_status = 'Maintenance'
-            
-        # Get room_id from booking to update rooms table
-        cursor.execute("SELECT room_id FROM bookings WHERE id = %s", (data['booking_id'],))
-        room_id = cursor.fetchone()[0]
-        
-        cursor.execute("UPDATE rooms SET status = %s WHERE id = %s", (new_room_status, room_id))
+            # Logic: New balance = (Total - Paid) + New Service Charge
+            current_balance = float(row['total_price']) - float(row['already_paid'])
+            new_total_owing = current_balance + service_charge 
+
+            receipt_number = f"SVC-{new_request_id}-{datetime.now().strftime('%y%m%d%H%M')}"
+
+            cursor.execute("""
+                INSERT INTO payments (booking_id, receipt_number, payment_method, amount_paid, balance, status)
+                VALUES (%s, %s, 'Service Charge', 0, %s, 'Unpaid')
+            """, (data['booking_id'], receipt_number, new_total_owing))
 
         conn.commit()
-        return jsonify({"message": "Check-out Complete"}), 200
-
+        return jsonify({"message": "Request logged", "id": new_request_id}), 200
     except Exception as e:
-        print(f"Error: {e}")
+        conn.rollback()
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
-    # ===========================================================
-    # MODULE 10 — Checkout Receipt Generation
-    # ===========================================================
-    @app.route('/api/checkout/receipt/<booking_ref>', methods=['GET'])
-    def generate_checkout_receipt(booking_ref):
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        try:
-            # Fetch booking and room details by booking reference
-            cursor.execute("""
-                SELECT b.id, b.booking_reference, CONCAT(b.first_name, ' ', b.last_name) AS guest_name,
-                       r.room_number, r.room_type, b.check_in, b.check_out, b.total_price
-                FROM bookings b
-                JOIN rooms r ON b.room_id = r.id
-                WHERE b.booking_reference = %s
-            """, (booking_ref,))
-            booking = cursor.fetchone()
-            if not booking:
-                return jsonify({"message": "Booking not found"}), 404
+# 3. UPDATE REQUEST STATUS (Combined logic for 'In Progress' or 'Completed')
+@app.route('/api/services/update-status/<int:id>', methods=['PUT'])
+def update_service_status(id):
+    new_status = request.json.get('status') # Frontend should send 'In Progress' or 'Completed'
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE service_requests SET status = %s WHERE id = %s", (new_status, id))
+    conn.commit()
+    conn.close()
+    return jsonify({"message": f"Marked as {new_status}"}), 200
 
-            # Sum payments for the booking
-            cursor.execute("SELECT COALESCE(SUM(amount_paid), 0) AS paid FROM payments WHERE booking_id = %s", (booking['id'],))
-            paid = float(cursor.fetchone()['paid'] or 0)
-            total = float(booking['total_price'] or 0)
-            balance = max(total - paid, 0.0)
+# 4. UPDATE ROOM FLAGS (DND / MUR)
+@app.route('/api/rooms/<int:room_id>/flags', methods=['PUT'])
+def update_room_flags(room_id):
+    data = request.json
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        updates, values = [], []
+        if 'dnd' in data:
+            updates.append("dnd = %s")
+            values.append(bool(data['dnd']))
+        if 'mur' in data:
+            updates.append("mur = %s")
+            values.append(bool(data['mur']))
+        
+        if not updates: return jsonify({"error": "No flags provided"}), 400
 
-            # Generate a simple PDF receipt
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(190, 10, txt="TONY'S APARTELLE", ln=True, align='C')
+        values.append(room_id)
+        cursor.execute(f"UPDATE rooms SET {', '.join(updates)} WHERE id = %s", values)
+        conn.commit()
+        return jsonify({"message": "Flags updated"}), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
 
-            pdf.set_font("Arial", size=10)
-            pdf.cell(190, 5, txt="WG6V+RX4, Butuan City-Malaybalay Rd", ln=True, align='C')
-            pdf.cell(190, 5, txt="Butuan City, 8600 Agusan del Norte", ln=True, align='C')
-            pdf.cell(190, 5, txt="Phone: 0909 392 9516", ln=True, align='C')
-
-            pdf.ln(8)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(190, 8, txt="CHECKOUT RECEIPT", ln=True, align='C')
-            pdf.ln(6)
-
-            pdf.set_font("Arial", size=11)
-            pdf.cell(100, 8, txt=f"Guest: {booking['guest_name']}", ln=0)
-            pdf.cell(90, 8, txt=f"Ref: {booking['booking_reference']}", ln=1, align='R')
-            pdf.cell(100, 8, txt=f"Room: {booking['room_type']} - {booking['room_number']}", ln=1)
-            pdf.cell(100, 8, txt=f"Check-in: {booking['check_in']}", ln=0)
-            pdf.cell(90, 8, txt=f"Check-out: {booking['check_out']}", ln=1, align='R')
-
-            pdf.ln(6)
-            pdf.set_font("Arial", 'B', 11)
-            pdf.cell(130, 10, txt="Description", border=1)
-            pdf.cell(60, 10, txt="Amount (PHP)", border=1, ln=True)
-
-            pdf.set_font("Arial", size=11)
-            pdf.cell(130, 10, txt="Room Charges", border=1)
-            pdf.cell(60, 10, txt=f"PHP {total:,.2f}", border=1, ln=True)
-
-            pdf.cell(130, 10, txt="Payments Received", border=1)
-            pdf.cell(60, 10, txt=f"PHP {paid:,.2f}", border=1, ln=True)
-
-            pdf.ln(4)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(130, 10, txt="BALANCE", border=0, align='R')
-            pdf.cell(60, 10, txt=f"PHP {balance:,.2f}", border=1, ln=True, align='C')
-
-            pdf.ln(8)
-            pdf.set_font("Arial", size=10)
-            pdf.multi_cell(0, 6, txt="This is the official checkout receipt. Please keep this for your records.")
-
-            filename = f"checkout_receipt_{booking['booking_reference']}.pdf"
-            pdf.output(filename)
-
-            # Send file and attempt cleanup after
-            return send_file(filename, as_attachment=True)
-        except Exception as e:
-            return jsonify({"message": str(e)}), 500
-        finally:
-            try:
-                cursor.close()
-                conn.close()
-            except:
-                pass
-            try:
-                if os.path.exists(filename):
-                    os.remove(filename)
-            except:
-                pass
+# 5. Delete Service Request (Only if Completed)
+@app.route('/api/services/delete/<int:id>', methods=['DELETE'])
+def delete_service_request(id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "DELETE FROM service_requests WHERE id = %s AND status = 'Completed'", (id,)
+        )
+        conn.commit()
+        return jsonify({"message": "Deleted"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
 
 # ===========================================================
 # MODULE 11 — Payment Update
