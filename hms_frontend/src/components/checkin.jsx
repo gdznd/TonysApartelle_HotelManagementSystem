@@ -133,10 +133,14 @@ export default function CheckIn() {
     const handleEditFromTable = (checkin) => {
         setSearchQuery(checkin.booking_id);
         setIsEditing(true);
+        // Handle name - either separate first_name/last_name or combined guest_name
+        const guestName = (checkin.first_name && checkin.last_name) 
+            ? `${checkin.first_name} ${checkin.last_name}` 
+            : (checkin.guest_name || `${checkin.first_name} ${checkin.last_name}`);
         setFormData({
             booking_id: checkin.booking_id,
             booking_reference: checkin.booking_id,
-            guest_name: `${checkin.first_name} ${checkin.last_name}`,
+            guest_name: guestName,
             contact: checkin.contact_number || '',
             room_number: checkin.room_number,
             room_type: '',
@@ -322,7 +326,7 @@ export default function CheckIn() {
                         {activeCheckins.length > 0 ? activeCheckins.map((c, i) => (
                             <tr key={i} style={{ borderBottom: '1px solid #eee' }}>
                                 <td style={{ ...tdStyle, fontWeight: 'bold', color: '#007bff' }}>{c.room_number}</td>
-                                <td style={tdStyle}>{c.first_name} {c.last_name}</td>
+                                <td style={tdStyle}>{c.first_name && c.last_name ? `${c.first_name} ${c.last_name}` : c.guest_name || ''}</td>
                                 <td style={{ ...tdStyle, fontSize: '13px', color: '#666' }}>{c.booking_id}</td>
                                 <td style={tdStyle}>{c.checkin_time ? new Date(c.checkin_time).toLocaleString() : '—'}</td>
                                 <td style={tdStyle}>

@@ -620,8 +620,11 @@ def get_active_checkins():
     cursor = conn.cursor(dictionary=True)
     sql = """
         SELECT c.id AS checkin_id, b.id AS booking_id, b.booking_reference,
+                   b.first_name, b.last_name,
                    CONCAT(b.first_name, ' ', b.last_name) AS guest_name,
-                   r.room_number, c.checkin_time
+                   r.room_number, c.checkin_time,
+                   c.key_issued, c.id_type, c.id_number, c.notes,
+                   b.contact_number
             FROM checkins c
             JOIN bookings b ON c.booking_id = b.id
             JOIN rooms r ON b.room_id = r.id
