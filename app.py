@@ -567,11 +567,12 @@ def search_booking():
         SELECT b.*, r.room_number, r.room_type, r.capacity 
         FROM bookings b
         JOIN rooms r ON b.room_id = r.id
-        WHERE b.status = 'Confirmed' 
-        AND (b.first_name LIKE %s OR b.last_name LIKE %s OR b.id LIKE %s)
+        WHERE b.status IN ('Confirmed', 'Checked-In')
+        AND (b.first_name LIKE %s OR b.last_name LIKE %s 
+             OR b.booking_reference LIKE %s OR CONCAT(b.first_name, ' ', b.last_name) LIKE %s)
     """
     search_term = f"%{query}%"
-    cursor.execute(sql, (search_term, search_term, search_term))
+    cursor.execute(sql, (search_term, search_term, search_term, search_term))
     results = cursor.fetchall()
     conn.close()
     return jsonify(results)
@@ -618,12 +619,13 @@ def get_active_checkins():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
     sql = """
-        SELECT c.*, b.first_name, b.last_name, r.room_number
-        FROM checkins c
-        JOIN bookings b ON c.booking_id = b.id
-        JOIN rooms r ON b.room_id = r.id
-        WHERE b.status = 'Checked-in'
-        ORDER BY c.checkin_time DESC
+        SELECT c.id AS checkin_id, b.id AS booking_id, b.booking_reference,
+                   CONCAT(b.first_name, ' ', b.last_name) AS guest_name,
+                   r.room_number, c.checkin_time
+            FROM checkins c
+            JOIN bookings b ON c.booking_id = b.id
+            JOIN rooms r ON b.room_id = r.id
+            WHERE c.status = 'Active'
     """
     cursor.execute(sql)
     results = cursor.fetchall()
