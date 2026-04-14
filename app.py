@@ -676,7 +676,9 @@ def get_service_guests():
             b.first_name,
             b.last_name,
             r.id          AS room_id,    
-            r.room_number
+            r.room_number,
+            r.dnd,
+            r.mur
         FROM bookings b
         JOIN rooms r ON b.room_id = r.id
         WHERE b.status = 'Checked-in'
@@ -992,7 +994,7 @@ def inventory_report_pdf():
     section_title("1. Room Status Overview", 41, 128, 185)
     table_header(
         ['Room Type', 'Total', 'Available', 'Occupied', 'Reserved', 'Maintenance'],
-        [50, 25, 30, 30, 30, 35],
+        [60, 20, 25, 25, 30, 30],
         41, 128, 185
     )
     for i, row in enumerate(room_summary):
@@ -1000,7 +1002,7 @@ def inventory_report_pdf():
             row['room_type'], row['total'],
             row['available'], row['occupied'],
             row['reserved'],  row['maintenance']
-        ], [50, 25, 30, 30, 30, 35], fill=(i % 2 == 1))
+        ], [60, 20, 25, 25, 30, 30], fill=(i % 2 == 1))
  
     pdf.ln(6)
  
@@ -1048,9 +1050,9 @@ def inventory_report_pdf():
  
     # --- SAVE & SEND ---
     import io
-    pdf_bytes = pdf.output()
+    pdf_content = pdf.output(dest='S').encode('latin-1')
     return send_file(
-        io.BytesIO(pdf_bytes),
+        io.BytesIO(pdf_content),
         as_attachment=True,
         download_name="Inventory_Report.pdf",
         mimetype="application/pdf"
