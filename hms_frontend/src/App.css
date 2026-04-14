@@ -6,38 +6,7 @@ body {
   padding: 0;
 }
 
-/* Navigation Bar */
-.navbar {
-  background-color: #fff;
-  padding: 15px 30px;
-  border-bottom: 1px solid #ddd;
-  display: flex;
-  gap: 20px;
-  overflow-x: auto; /* Allows scrolling if many buttons */
-  white-space: nowrap;
-}
-
-.nav-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 14px;
-  color: #555;
-  padding: 8px 12px;
-  border-radius: 4px;
-}
-
-.nav-btn:hover {
-  background-color: #e9ecef;
-  color: #007bff;
-}
-
-.nav-btn.active {
-  background-color: #007bff;
-  color: white;
-}
-
-/* Dashboard Grid */
+/* Room Cards (used by Dashboard) */
 .dashboard-container {
   padding: 30px;
 }
@@ -49,7 +18,6 @@ body {
   margin-top: 20px;
 }
 
-/* Room Cards */
 .room-card {
   background: white;
   padding: 20px;
